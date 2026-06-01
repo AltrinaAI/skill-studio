@@ -4,13 +4,12 @@
 //
 // Usage: skill-server [--port N] [--host H] [--dist PATH]
 //   defaults: --host 127.0.0.1  --port 8765  --dist ./dist
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
 use serde_json::{json, Value};
-use skill_core::{discover, skill};
+use skill_core::{discover, gitops, secrets, skill, sync};
 use tiny_http::{Header, Method, Response, Server};
 
 struct Reply {
@@ -103,6 +102,23 @@ fn query_param(url: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Locate the bundled `skill-studio` activation skill so setup can install it.
+/// Honors `SKILL_BOOTSTRAP_SKILL`, else looks relative to CWD and the dist dir.
+fn bootstrap_skill_dir(dist: &Path) -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("SKILL_BOOTSTRAP_SKILL") {
+        let pb = PathBuf::from(p);
+        if pb.join("SKILL.md").exists() {
+            return Some(pb);
+        }
+    }
+    let candidates = [
+        PathBuf::from("skills/skill-studio"),
+        dist.join("../skills/skill-studio"),
+        dist.join("skills/skill-studio"),
+    ];
+    candidates.into_iter().find(|c| c.join("SKILL.md").exists())
+}
+
 fn handle(method: &Method, url: &str, body: &str, dist: &Path) -> Reply {
     let path = url.split('?').next().unwrap_or(url);
     let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
@@ -126,6 +142,29 @@ fn handle(method: &Method, url: &str, body: &str, dist: &Path) -> Reply {
         }
         (Method::Post, "/api/read-image") => json_reply(skill::read_image_impl(&s("root"), &s("rel"))),
         (Method::Post, "/api/list-dir") => json_reply(skill::list_dir_impl(&s("path"))),
+        (Method::Post, "/api/sync-targets") => json_reply(sync::sync_targets(&s("root"))),
+        (Method::Post, "/api/sync-skill") => {
+            let overwrite = v.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false);
+            json_reply(sync::sync_skill(&s("root"), &s("agent"), overwrite))
+        }
+        (Method::Post, "/api/git-info") => json_reply(gitops::git_info(&s("root"))),
+        (Method::Post, "/api/git-init") => json_reply(gitops::git_init(&s("root"))),
+        (Method::Post, "/api/git-commit") => json_reply(gitops::git_commit(&s("root"), &s("message"))),
+        (Method::Post, "/api/git-log") => {
+            let limit = v.get("limit").and_then(|x| x.as_u64()).unwrap_or(20) as usize;
+            json_reply(gitops::git_log(&s("root"), limit))
+        }
+        (Method::Get, "/api/secrets-status") => json_reply(secrets::secrets_status()),
+        (Method::Get, "/api/secrets-list") => json_reply(secrets::secrets_list()),
+        (Method::Post, "/api/secret-set") => {
+            json_reply(secrets::secret_set(&s("key"), &s("value")).map(|_| json!({ "ok": true })))
+        }
+        (Method::Post, "/api/secret-delete") => {
+            json_reply(secrets::secret_delete(&s("key")).map(|_| json!({ "ok": true })))
+        }
+        (Method::Post, "/api/secrets-setup") => {
+            json_reply(secrets::secrets_setup(bootstrap_skill_dir(dist).as_deref()))
+        }
         (Method::Get, "/api/download") => {
             let root = query_param(url, "root").unwrap_or_default();
             match skill::zip_skill_bytes(&root) {

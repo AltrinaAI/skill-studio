@@ -6,14 +6,23 @@ import Sidebar from "./Sidebar";
 import Home from "./Home";
 import SkillDocument from "./SkillDocument";
 import FilePane from "./FilePane";
+import ManagePanel from "./ManagePanel";
 import { Spinner } from "./ui";
 import { addRecent } from "./recents";
 import { confirmDiscardIfDirty } from "./editorState";
+import { agentForPath, skillKind } from "@/lib/agents";
 import * as api from "@/lib/api";
 import type { SkillData, FileData } from "@/lib/types";
 
 function skillName(d: SkillData): string {
   return typeof d.frontmatter.name === "string" && d.frontmatter.name ? d.frontmatter.name : d.dirName;
+}
+
+// Env vars the skill declares it needs, via an optional `secrets:` list in
+// SKILL.md frontmatter — surfaced in the Manage drawer's Secrets section.
+function declaredSecrets(d: SkillData): string[] {
+  const raw = (d.frontmatter as Record<string, unknown>).secrets;
+  return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
 }
 
 export default function SkillApp({
@@ -33,6 +42,7 @@ export default function SkillApp({
   const [fileData, setFileData] = useState<FileData | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
   const reqRef = useRef(0);
 
   const toggleTheme = useCallback(() => {
@@ -114,7 +124,14 @@ export default function SkillApp({
 
   return (
     <div className="flex h-screen flex-col bg-app text-fg">
-      <TopBar onHome={goHome} skillName={skillName(data)} selected={selected} root={data.root} toggleTheme={toggleTheme} />
+      <TopBar
+        onHome={goHome}
+        skillName={skillName(data)}
+        selected={selected}
+        root={data.root}
+        onManage={() => setManageOpen(true)}
+        toggleTheme={toggleTheme}
+      />
       <div className="flex min-h-0 flex-1">
         <Sidebar data={data} selected={selected} onSelect={selectFile} />
         <main className="min-w-0 flex-1 overflow-auto">
@@ -131,6 +148,16 @@ export default function SkillApp({
           ) : null}
         </main>
       </div>
+      {manageOpen && (
+        <ManagePanel
+          root={data.root}
+          dirName={data.dirName}
+          kind={skillKind(data.root).kind}
+          agent={agentForPath(data.root)}
+          declaredSecrets={declaredSecrets(data)}
+          onClose={() => setManageOpen(false)}
+        />
+      )}
     </div>
   );
 }

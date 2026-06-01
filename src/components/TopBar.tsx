@@ -1,7 +1,7 @@
 "use client";
 
 import { ThemeToggle } from "./ui";
-import { BrandIcon } from "./FileIcon";
+import NavBar from "./NavBar";
 import { requestSave, useEditorStatus } from "./editorState";
 import { exportZip } from "@/lib/api";
 
@@ -44,52 +44,63 @@ export default function TopBar({
   skillName,
   selected,
   root,
+  onManage,
   toggleTheme,
 }: {
   onHome: () => void;
   skillName: string;
   selected: string | null;
   root: string;
+  onManage: () => void;
   toggleTheme: () => void;
 }) {
   return (
-    <header className="z-20 flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm">
-      <button
-        type="button"
-        onClick={onHome}
-        title="Back to home"
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-fg hover:bg-panel"
-      >
-        <BrandIcon />
-        <span className="font-medium">Agent Skill Studio</span>
-      </button>
-      <span className="text-faint" aria-hidden>
-        /
-      </span>
-      <span className="truncate font-medium text-fg">{skillName}</span>
-      {selected && selected !== "SKILL.md" && (
+    <NavBar
+      onHome={onHome}
+      breadcrumb={
         <>
           <span className="text-faint" aria-hidden>
             /
           </span>
-          <span className="truncate font-mono text-xs text-muted">{selected}</span>
+          <span className="truncate font-medium text-fg">{skillName}</span>
+          {selected && selected !== "SKILL.md" && (
+            <>
+              <span className="text-faint" aria-hidden>
+                /
+              </span>
+              <span className="truncate font-mono text-xs text-muted">{selected}</span>
+            </>
+          )}
         </>
-      )}
-      <div className="ml-auto flex items-center gap-1">
-        <SaveButton />
-        <button
-          type="button"
-          onClick={() => exportZip(root)}
-          title="Export skill as .zip"
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-panel hover:text-fg"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
-          </svg>
-          <span className="hidden sm:inline">Export .zip</span>
-        </button>
-        <ThemeToggle onClick={toggleTheme} />
-      </div>
-    </header>
+      }
+    >
+      <SaveButton />
+      <button
+        type="button"
+        onClick={onManage}
+        title="Version, sync & collaborate"
+        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-panel hover:text-fg"
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="6" cy="6" r="2.5" />
+          <circle cx="6" cy="18" r="2.5" />
+          <circle cx="18" cy="9" r="2.5" />
+          <path d="M6 8.5v7M8.4 6.6c5 .3 7.5 1 7.5 4.4M18 11.5c0 3-2.5 4-6 4.2" />
+        </svg>
+        <span className="hidden sm:inline">Manage</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => exportZip(root)}
+        title="Export skill as .zip"
+        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-panel hover:text-fg"
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
+        </svg>
+        <span className="hidden sm:inline">Export .zip</span>
+      </button>
+      <ThemeToggle onClick={toggleTheme} />
+    </NavBar>
   );
 }

@@ -1,7 +1,12 @@
 // Skill auto-discovery across agents' global/home canonical locations.
-// A skill = a directory containing SKILL.md (nested layouts supported).
+// A skill = a directory containing SKILL.md (nested layouts supported). Each
+// discovered skill is classified by provenance:
+//   "personal" — you authored/customized it (editable, version-controllable)
+//   "official" — vendor-bundled (Codex .system, Cursor managed/built-in, Anthropic plugins)
+//   "plugin"   — an installed third-party package (marketplaces / external / remote)
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde::Serialize;
 use walkdir::WalkDir;
@@ -12,7 +17,11 @@ pub struct DiscoveredSkill {
     name: Option<String>,
     description: Option<String>,
     root: String,
-    source_label: String,
+    kind: String,
+    /// Repo/folder name when this is a project-scoped skill (`<repo>/.claude/skills/…`);
+    /// None for global/home skills.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -67,7 +76,13 @@ fn read_meta(skill_md: &Path) -> (Option<String>, Option<String>) {
     }
 }
 
-fn collect(root: &Path, label: &str, skills: &mut Vec<DiscoveredSkill>, seen: &mut HashSet<PathBuf>) {
+/// Walk `root`, classifying each discovered skill with `classify(skill_dir) -> kind`.
+fn collect(
+    root: &Path,
+    classify: &dyn Fn(&Path) -> &'static str,
+    skills: &mut Vec<DiscoveredSkill>,
+    seen: &mut HashSet<PathBuf>,
+) {
     if !root.exists() {
         return;
     }
@@ -88,52 +103,216 @@ fn collect(root: &Path, label: &str, skills: &mut Vec<DiscoveredSkill>, seen: &m
             continue; // already found via another root
         }
         let (name, description) = read_meta(entry.path());
+        let kind = classify(&skill_dir);
         skills.push(DiscoveredSkill {
             name,
             description,
             root: skill_dir.to_string_lossy().into_owned(),
-            source_label: label.to_string(),
+            kind: kind.to_string(),
+            project: None,
         });
     }
 }
 
-/// Discover skills across the per-agent global/home canonical dirs.
+// --- per-agent classifiers ---------------------------------------------
+
+/// Claude Code: split Anthropic's official-marketplace `plugins/` from everything
+/// else under the plugin trees. `~/.claude/plugins/marketplaces/<m>/(plugins|
+/// external_plugins)/<plugin>/skills/<skill>` — official iff <m> is the official
+/// marketplace and the skill sits in its `plugins/` (not `external_plugins/`).
+fn claude_plugin_kind(skill_dir: &Path) -> &'static str {
+    let s = skill_dir.to_string_lossy().replace('\\', "/");
+    if let Some(idx) = s.find("/marketplaces/") {
+        let rest = &s[idx + "/marketplaces/".len()..];
+        let mut parts = rest.splitn(2, '/');
+        let marketplace = parts.next().unwrap_or("");
+        let after = parts.next().unwrap_or("");
+        if after.starts_with("external_plugins/") {
+            return "plugin";
+        }
+        if marketplace.contains("official") && after.starts_with("plugins/") {
+            return "official";
+        }
+    }
+    "plugin"
+}
+
+/// Codex: bundled skills live under the hidden `.system/` subdir; user skills are
+/// direct children of `~/.codex/skills/`.
+fn codex_kind(skill_dir: &Path) -> &'static str {
+    if skill_dir.components().any(|c| c.as_os_str() == ".system") {
+        "official"
+    } else {
+        "personal"
+    }
+}
+
+#[derive(Default)]
+struct Groups {
+    claude: Vec<DiscoveredSkill>,
+    codex: Vec<DiscoveredSkill>,
+    cursor: Vec<DiscoveredSkill>,
+    openclaw: Vec<DiscoveredSkill>,
+}
+
+fn push_to_agent(g: &mut Groups, agent: &str, skill: DiscoveredSkill) {
+    match agent {
+        "Claude Code" => g.claude.push(skill),
+        "Codex" => g.codex.push(skill),
+        "Cursor" => g.cursor.push(skill),
+        "OpenClaw" => g.openclaw.push(skill),
+        _ => {}
+    }
+}
+
+// --- project-scoped discovery ------------------------------------------
+// A project skill lives in a repo at `<repo>/<marker>/skills/<name>/SKILL.md`,
+// where <marker> is an agent's project dotdir. We walk the home tree, pruning the
+// usual build/dependency dirs (and every non-marker dotdir), to find them.
+
+const PROJECT_MARKERS: [(&str, &str); 4] = [
+    (".claude", "Claude Code"),
+    (".cursor", "Cursor"),
+    (".codex", "Codex"),
+    (".agents", "Codex"), // cross-agent convention; surfaced under Codex
+];
+
+// Non-hidden heavyweight dirs to never descend into (hidden dirs are pruned
+// wholesale below, except the markers).
+const PROJECT_PRUNE: &[&str] = &[
+    "node_modules", "target", "dist", "build", "out", "vendor", "Pods", "coverage",
+    "venv", "__pycache__", "site-packages", "Library", "AppData",
+];
+
+fn is_marker(name: &str) -> bool {
+    PROJECT_MARKERS.iter().any(|(m, _)| *m == name)
+}
+
+/// True if the walker should NOT descend into `path`.
+fn prune_project_dir(path: &Path, home: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if PROJECT_PRUNE.contains(&name) {
+        return true;
+    }
+    // Go module cache (~/go/pkg/mod) — third-party deps, not your projects.
+    if name == "pkg"
+        && path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()) == Some("go")
+    {
+        return true;
+    }
+    // Skip non-marker hidden dirs (.git, .cache, .config, .github, .vscode, …).
+    if name.starts_with('.') && !is_marker(name) {
+        return true;
+    }
+    // The home-level agent dotdirs are global; they're scanned separately.
+    if is_marker(name) && path.parent() == Some(home) {
+        return true;
+    }
+    false
+}
+
+/// From a skill dir, find the nearest enclosing `<repo>/<marker>/skills/…` and
+/// return (agent, repo-name); None if it isn't under a project marker.
+fn project_attribution(skill_dir: &Path) -> Option<(&'static str, String)> {
+    let mut cur = skill_dir;
+    while let Some(parent) = cur.parent() {
+        if parent.file_name().and_then(|n| n.to_str()) == Some("skills") {
+            if let Some(marker_dir) = parent.parent() {
+                if let Some(marker) = marker_dir.file_name().and_then(|n| n.to_str()) {
+                    if let Some((_, agent)) = PROJECT_MARKERS.iter().find(|(m, _)| *m == marker) {
+                        let project = marker_dir
+                            .parent()
+                            .and_then(|r| r.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "project".into());
+                        return Some((agent, project));
+                    }
+                }
+            }
+        }
+        cur = parent;
+    }
+    None
+}
+
+/// Walk `root` for project-scoped skills, bounded by an entry budget + wall-clock.
+fn scan_projects(root: &Path, home: &Path, g: &mut Groups, seen: &mut HashSet<PathBuf>) {
+    let start = Instant::now();
+    let mut budget: i64 = 1_000_000;
+    let walker = WalkDir::new(root)
+        .follow_links(false)
+        .max_depth(12)
+        .into_iter()
+        .filter_entry(|e| !prune_project_dir(e.path(), home));
+    for entry in walker.filter_map(|e| e.ok()) {
+        budget -= 1;
+        if budget <= 0 || start.elapsed().as_secs() >= 6 {
+            break;
+        }
+        if !entry.file_type().is_file() || entry.file_name() != "SKILL.md" {
+            continue;
+        }
+        let Some(skill_dir) = entry.path().parent() else {
+            continue;
+        };
+        let Some((agent, project)) = project_attribution(skill_dir) else {
+            continue;
+        };
+        let canon = std::fs::canonicalize(skill_dir).unwrap_or_else(|_| skill_dir.to_path_buf());
+        if !seen.insert(canon) {
+            continue; // already found (e.g. as a global skill)
+        }
+        let (name, description) = read_meta(entry.path());
+        push_to_agent(
+            g,
+            agent,
+            DiscoveredSkill {
+                name,
+                description,
+                root: skill_dir.to_string_lossy().into_owned(),
+                kind: "personal".into(),
+                project: Some(project),
+            },
+        );
+    }
+}
+
+/// Discover skills across the per-agent global/home canonical dirs, plus
+/// project-scoped skills in repos under the home directory.
 pub fn discover_all() -> Result<Vec<AgentSkills>, String> {
     let home = dirs::home_dir().ok_or_else(|| "No home directory.".to_string())?;
-
-    let groups: Vec<(&str, Vec<(&str, PathBuf)>)> = vec![
-        (
-            "Claude Code",
-            vec![
-                ("personal", home.join(".claude/skills")),
-                ("plugins", home.join(".claude/plugins")),
-                ("plugins", home.join(".claude/remote/plugins")),
-            ],
-        ),
-        ("Codex", vec![("skills", home.join(".codex/skills"))]),
-        ("Cursor", vec![("skills", home.join(".cursor/skills-cursor"))]),
-        (
-            "OpenClaw",
-            vec![
-                ("openclaw", home.join(".openclaw/skills")),
-                ("agents", home.join(".agents/skills")),
-            ],
-        ),
-    ];
-
     let mut seen: HashSet<PathBuf> = HashSet::new();
-    let mut out = Vec::new();
-    for (agent, roots) in groups {
-        let mut skills = Vec::new();
-        for (label, root) in roots {
-            collect(&root, label, &mut skills, &mut seen);
-        }
-        out.push(AgentSkills {
-            agent: agent.to_string(),
-            skills,
-        });
-    }
-    Ok(out)
+    let mut g = Groups::default();
+
+    // Claude Code — personal skills, plugin trees, remote plugins.
+    collect(&home.join(".claude/skills"), &|_: &Path| "personal", &mut g.claude, &mut seen);
+    collect(&home.join(".claude/plugins"), &claude_plugin_kind, &mut g.claude, &mut seen);
+    collect(&home.join(".claude/remote/plugins"), &|_: &Path| "plugin", &mut g.claude, &mut seen);
+
+    // Codex — ~/.codex/skills, with .system/ being the bundled set.
+    collect(&home.join(".codex/skills"), &codex_kind, &mut g.codex, &mut seen);
+
+    // Cursor — everything in `skills-cursor/` is Cursor-provided (their own
+    // .gitignore labels it "Built-in Cursor skills"); the user's own skills live
+    // in the separate `~/.cursor/skills/`.
+    collect(&home.join(".cursor/skills-cursor"), &|_: &Path| "official", &mut g.cursor, &mut seen);
+    collect(&home.join(".cursor/skills"), &|_: &Path| "personal", &mut g.cursor, &mut seen);
+
+    // OpenClaw — personal/local roots (bundled skills live in the read-only install dir).
+    collect(&home.join(".openclaw/skills"), &|_: &Path| "personal", &mut g.openclaw, &mut seen);
+    collect(&home.join(".agents/skills"), &|_: &Path| "personal", &mut g.openclaw, &mut seen);
+
+    // Project-scoped skills in repos under the home directory.
+    scan_projects(&home, &home, &mut g, &mut seen);
+
+    Ok(vec![
+        AgentSkills { agent: "Claude Code".into(), skills: g.claude },
+        AgentSkills { agent: "Codex".into(), skills: g.codex },
+        AgentSkills { agent: "Cursor".into(), skills: g.cursor },
+        AgentSkills { agent: "OpenClaw".into(), skills: g.openclaw },
+    ])
 }
 
 #[cfg(test)]
@@ -162,6 +341,50 @@ mod tests {
     }
 
     #[test]
+    fn classifiers() {
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(
+            claude_plugin_kind(&p("/h/.claude/plugins/marketplaces/claude-plugins-official/plugins/code-review/skills/x")),
+            "official"
+        );
+        assert_eq!(
+            claude_plugin_kind(&p("/h/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/github/skills/x")),
+            "plugin"
+        );
+        assert_eq!(
+            claude_plugin_kind(&p("/h/.claude/plugins/marketplaces/some-community/plugins/foo/skills/x")),
+            "plugin"
+        );
+        assert_eq!(codex_kind(&p("/h/.codex/skills/.system/imagegen")), "official");
+        assert_eq!(codex_kind(&p("/h/.codex/skills/my-skill")), "personal");
+    }
+
+    #[test]
+    fn project_shapes() {
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(
+            project_attribution(&p("/home/u/altrina/Tesseract/.claude/skills/tesseract-debug")),
+            Some(("Claude Code", "Tesseract".to_string()))
+        );
+        assert_eq!(
+            project_attribution(&p("/home/u/work/app/.cursor/skills/group/my-skill")),
+            Some(("Cursor", "app".to_string()))
+        );
+        assert_eq!(
+            project_attribution(&p("/home/u/repo/.agents/skills/x")),
+            Some(("Codex", "repo".to_string()))
+        );
+        assert_eq!(project_attribution(&p("/home/u/repo/src/skills/x")), None);
+        // home-level dotdirs are pruned from the project walk
+        let home = p("/home/u");
+        assert!(prune_project_dir(&p("/home/u/.claude"), &home));
+        assert!(prune_project_dir(&p("/home/u/proj/node_modules"), &home));
+        assert!(prune_project_dir(&p("/home/u/proj/.git"), &home));
+        assert!(!prune_project_dir(&p("/home/u/proj/.claude"), &home));
+        assert!(!prune_project_dir(&p("/home/u/proj/src"), &home));
+    }
+
+    #[test]
     fn discovers_a_planted_skill() {
         let base = std::env::temp_dir().join(format!("ass_discover_{}", std::process::id()));
         let skill = base.join("nested").join("my-skill");
@@ -171,11 +394,11 @@ mod tests {
 
         let mut found = Vec::new();
         let mut seen = HashSet::new();
-        collect(&base, "test", &mut found, &mut seen);
+        collect(&base, &|_: &Path| "personal", &mut found, &mut seen);
 
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name.as_deref(), Some("my-skill"));
-        assert_eq!(found[0].source_label, "test");
+        assert_eq!(found[0].kind, "personal");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -191,9 +414,10 @@ mod tests {
             println!("  {} ({})", g.agent, g.skills.len());
             for s in &g.skills {
                 println!(
-                    "    - {}  [{}]  {}",
+                    "    - {}  [{}]{}  {}",
                     s.name.as_deref().unwrap_or("(no name)"),
-                    s.source_label,
+                    s.kind,
+                    s.project.as_deref().map(|p| format!("  (project: {p})")).unwrap_or_default(),
                     s.root
                 );
             }

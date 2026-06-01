@@ -1,5 +1,5 @@
 // Tauri desktop app: thin #[tauri::command] wrappers over skill-core.
-use skill_core::{discover, skill};
+use skill_core::{discover, gitops, secrets, skill, sync};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
@@ -51,6 +51,66 @@ async fn export_skill_zip(app: tauri::AppHandle, root: String) -> Result<bool, S
     Ok(true)
 }
 
+#[tauri::command]
+async fn sync_targets(root: String) -> Result<Vec<sync::SyncTarget>, String> {
+    sync::sync_targets(&root)
+}
+
+#[tauri::command]
+async fn sync_skill(root: String, agent: String, overwrite: bool) -> Result<sync::SyncResult, String> {
+    sync::sync_skill(&root, &agent, overwrite)
+}
+
+#[tauri::command]
+async fn git_info(root: String) -> Result<gitops::GitInfo, String> {
+    gitops::git_info(&root)
+}
+
+#[tauri::command]
+async fn git_init(root: String) -> Result<gitops::GitInfo, String> {
+    gitops::git_init(&root)
+}
+
+#[tauri::command]
+async fn git_commit(root: String, message: String) -> Result<gitops::CommitResult, String> {
+    gitops::git_commit(&root, &message)
+}
+
+#[tauri::command]
+async fn git_log(root: String, limit: usize) -> Result<Vec<gitops::Commit>, String> {
+    gitops::git_log(&root, limit)
+}
+
+#[tauri::command]
+async fn secrets_status() -> Result<secrets::SecretsStatus, String> {
+    secrets::secrets_status()
+}
+
+#[tauri::command]
+async fn secrets_list() -> Result<Vec<secrets::SecretEntry>, String> {
+    secrets::secrets_list()
+}
+
+#[tauri::command]
+async fn secret_set(key: String, value: String) -> Result<(), String> {
+    secrets::secret_set(&key, &value)
+}
+
+#[tauri::command]
+async fn secret_delete(key: String) -> Result<(), String> {
+    secrets::secret_delete(&key)
+}
+
+#[tauri::command]
+async fn secrets_setup(app: tauri::AppHandle) -> Result<secrets::SetupResult, String> {
+    let src = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|r| r.join("skills").join("skill-studio"));
+    secrets::secrets_setup(src.as_deref())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -63,6 +123,17 @@ pub fn run() {
             discover_skills,
             pick_skill_folder,
             export_skill_zip,
+            sync_targets,
+            sync_skill,
+            git_info,
+            git_init,
+            git_commit,
+            git_log,
+            secrets_status,
+            secrets_list,
+            secret_set,
+            secret_delete,
+            secrets_setup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

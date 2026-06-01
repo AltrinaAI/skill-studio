@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useManualSave } from "./useManualSave";
+import { agentColor, agentForPath, skillKind } from "@/lib/agents";
 import * as api from "@/lib/api";
 import {
   serializeSkillMd,
@@ -107,6 +108,53 @@ function ValidationPill({ issues }: { issues: ValidationIssue[] }) {
   );
 }
 
+/** Skill provenance line: which agent owns it, its kind, and its path (copyable). */
+function SkillMeta({ root }: { root: string }) {
+  const agent = agentForPath(root);
+  const kind = skillKind(root);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1200);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const copy = useCallback(() => {
+    navigator.clipboard
+      ?.writeText(root)
+      .then(() => setCopied(true))
+      .catch(() => {});
+  }, [root]);
+  return (
+    <>
+      {agent && (
+        <span className="inline-flex items-center gap-1.5 text-muted">
+          <span className="h-2 w-2 rounded-full" style={{ background: agentColor(agent) }} aria-hidden />
+          {agent}
+          <span className="text-faint">· {kind.label}</span>
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={copy}
+        title="Copy path"
+        className="ml-auto flex min-w-0 items-center gap-1.5 font-mono text-faint hover:text-muted"
+      >
+        <span className="truncate">{root}</span>
+        {copied ? (
+          <svg className="shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-label="Copied">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        ) : (
+          <svg className="shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        )}
+      </button>
+    </>
+  );
+}
+
 const inputCls =
   "w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint border-b border-transparent focus:border-border-strong py-0.5";
 
@@ -158,9 +206,9 @@ export default function SkillDocument({ data }: { data: SkillData }) {
 
   return (
     <div className="mx-auto max-w-184 px-6 py-10 sm:px-10">
-      <div className="mb-7 flex items-center gap-4 text-xs">
+      <div className="mb-7 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
         <ValidationPill issues={issues} />
-        <span className="ml-auto font-mono text-faint">SKILL.md</span>
+        <SkillMeta root={data.root} />
       </div>
 
       <input

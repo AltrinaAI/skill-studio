@@ -140,9 +140,90 @@ export interface DiscoveredSkill {
   name?: string;
   description?: string;
   root: string;
-  sourceLabel: string;
+  /** Backend-computed provenance: "personal" | "official" | "plugin". */
+  kind: string;
+  /** Repo/folder name when the skill is project-scoped (`<repo>/.claude/skills/…`). */
+  project?: string;
 }
 export interface AgentSkills {
   agent: string;
   skills: DiscoveredSkill[];
 }
+
+// --- sync a skill into another agent's personal dir ---
+export interface SyncTarget {
+  agent: string;
+  dir: string;
+  present: boolean;
+  isSource: boolean;
+}
+export const syncTargets = (root: string) =>
+  isTauri ? invoke<SyncTarget[]>("sync_targets", { root }) : http<SyncTarget[]>("POST", "sync-targets", { root });
+export const syncSkill = (root: string, agent: string, overwrite: boolean) =>
+  isTauri
+    ? invoke<{ dest: string }>("sync_skill", { root, agent, overwrite })
+    : http<{ dest: string }>("POST", "sync-skill", { root, agent, overwrite });
+
+// --- per-skill git version control ---
+export interface GitInfo {
+  available: boolean;
+  isRepo: boolean;
+  inParentRepo: boolean;
+  toplevel?: string;
+  branch?: string;
+  dirty: boolean;
+  hasRemote: boolean;
+  hasIdentity: boolean;
+}
+export interface GitCommit {
+  short: string;
+  message: string;
+  author: string;
+  relativeDate: string;
+}
+export const gitInfo = (root: string) =>
+  isTauri ? invoke<GitInfo>("git_info", { root }) : http<GitInfo>("POST", "git-info", { root });
+export const gitInit = (root: string) =>
+  isTauri ? invoke<GitInfo>("git_init", { root }) : http<GitInfo>("POST", "git-init", { root });
+export const gitCommit = (root: string, message: string) =>
+  isTauri
+    ? invoke<{ sha: string; summary: string }>("git_commit", { root, message })
+    : http<{ sha: string; summary: string }>("POST", "git-commit", { root, message });
+export const gitLog = (root: string, limit = 20) =>
+  isTauri ? invoke<GitCommit[]>("git_log", { root, limit }) : http<GitCommit[]>("POST", "git-log", { root, limit });
+
+// --- secret manager (machine-local env vars for skills) ---
+export interface SecretEntry {
+  key: string;
+  value: string;
+}
+export interface AgentInstall {
+  agent: string;
+  /** The agent's home dir exists on this machine. */
+  installed: boolean;
+  /** The skill-studio activation skill is installed for this agent. */
+  hasSkill: boolean;
+}
+export interface SecretsStatus {
+  configured: boolean;
+  storePath: string;
+  envPath: string;
+  count: number;
+  agents: AgentInstall[];
+}
+export interface SetupResult {
+  envPath: string;
+  storePath: string;
+  installedAgents: string[];
+  skillInstalled: boolean;
+}
+export const secretsStatus = () =>
+  isTauri ? invoke<SecretsStatus>("secrets_status") : http<SecretsStatus>("GET", "secrets-status");
+export const secretsList = () =>
+  isTauri ? invoke<SecretEntry[]>("secrets_list") : http<SecretEntry[]>("GET", "secrets-list");
+export const secretSet = (key: string, value: string) =>
+  isTauri ? invoke<void>("secret_set", { key, value }) : http<void>("POST", "secret-set", { key, value });
+export const secretDelete = (key: string) =>
+  isTauri ? invoke<void>("secret_delete", { key }) : http<void>("POST", "secret-delete", { key });
+export const secretsSetup = () =>
+  isTauri ? invoke<SetupResult>("secrets_setup") : http<SetupResult>("POST", "secrets-setup");
