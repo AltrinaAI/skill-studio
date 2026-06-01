@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
 # activate.sh — load every secret Skill Studio manages into the agent's
-# environment. Agent-agnostic: it does not assume any particular harness.
+# environment. Agent-agnostic and sandbox-tolerant: it never hard-fails just
+# because it can't write to your shell startup files (some agents, e.g. Codex,
+# run each command in a fresh shell with a read-only HOME).
 #
-# Run it through eval so the values also land in the *current* shell:
+# Most portable (works even in a read-only, fresh-shell sandbox) — source the
+# env file in the SAME command that needs the secrets:
+#   . "$HOME/.config/skill-studio/env" && your-command
+#
+# For a persistent shell, load them into the current shell via eval:
 #   eval "$(bash /path/to/skill-studio/activate.sh --print)"
 #
-#   (no flag)   wire future shells to load the secrets; print a summary only.
+#   (no flag)   try to wire future shells to load the secrets; print a summary.
 #   --print     also emit `export KEY=VALUE` on stdout for eval to consume.
 #
-# Two delivery paths, because no single file is read by every agent's shell:
-#   • eval --print injects into whatever shell is running right now (universal).
-#   • the startup-file hook covers harnesses that re-source a profile on each
-#     command (e.g. a fresh shell per tool call) so they inherit them too.
-#
-# Secret *values* go to stdout only with --print (eval consumes them, so they
-# never reach the transcript). Only key *names* are printed, to stderr.
+# Secret values reach stdout only with --print (eval consumes them, so they
+# never hit the transcript). Only key names are printed, to stderr.
 
-set -euo pipefail
+# NOT -e: patching startup files is best-effort and must never abort the script
+# before it has printed the exports the caller actually depends on.
+set -uo pipefail
 
-# File of `export KEY=VALUE` lines that Skill Studio renders from its store.
 ENV_FILE="${SKILL_STUDIO_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/skill-studio/env}"
 MARKER='# skill-studio (managed — loads your Skill Studio secrets)'
 
@@ -28,24 +30,29 @@ if [ ! -s "$ENV_FILE" ]; then
   exit 0
 fi
 
-# Make future shells source the secrets. Prepend the hook ABOVE any
-# "return if not interactive" guard, since per-command harness shells are
-# usually non-interactive and would skip anything below it.
-for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zshenv" "$HOME/.profile"; do
-  grep -qF "$MARKER" "$rc" 2>/dev/null && continue
-  tmp="$(mktemp)"
-  {
-    printf '%s\n' "$MARKER"
-    printf '[ -f "%s" ] && . "%s"\n' "$ENV_FILE" "$ENV_FILE"
-    printf '# end skill-studio\n\n'
-    cat "$rc" 2>/dev/null || true
-  } >"$tmp"
-  mv "$tmp" "$rc"
-done
-
-# Load into the current shell when asked (eval consumes stdout — no leak).
+# 1. ESSENTIAL FIRST: emit the exports for the current shell, so `eval` always
+#    receives the credentials even if the best-effort steps below can't run.
 [ "${1:-}" = "--print" ] && cat "$ENV_FILE"
 
-# Summary — key names only, never values.
-names="$(sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$ENV_FILE" | paste -sd' ' -)"
-echo "skill-studio: ready — ${names:-no secrets found}" >&2
+# 2. BEST-EFFORT: make future shells source the env file. Skip any target we
+#    can't write (read-only HOME in a sandbox); never let a failure abort.
+for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zshenv" "$HOME/.profile"; do
+  grep -qF "$MARKER" "$rc" 2>/dev/null && continue
+  [ -w "$rc" ] 2>/dev/null || [ -w "$(dirname "$rc")" ] 2>/dev/null || continue
+  tmp="$(mktemp 2>/dev/null)" || continue
+  if {
+       printf '%s\n' "$MARKER"
+       printf '[ -f "%s" ] && . "%s"\n' "$ENV_FILE" "$ENV_FILE"
+       printf '# end skill-studio\n\n'
+       cat "$rc" 2>/dev/null || true
+     } >"$tmp" 2>/dev/null && mv "$tmp" "$rc" 2>/dev/null; then
+    :
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+done
+
+# 3. Summary — key names only, plus where to source them directly.
+names="$(sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$ENV_FILE" | paste -sd' ' - 2>/dev/null)"
+echo "skill-studio: ready — ${names:-no secrets found}  (source directly: . '$ENV_FILE')" >&2
+exit 0
