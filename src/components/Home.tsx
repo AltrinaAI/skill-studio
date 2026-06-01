@@ -7,7 +7,7 @@ import { FolderIcon } from "./FileIcon";
 import FolderPicker from "./FolderPicker";
 import SecretsManager from "./SecretsManager";
 import { useRecents, removeRecent } from "./recents";
-import { agentColor, kindMeta, KIND_TAG } from "@/lib/agents";
+import { agentColor, kindMeta, KIND_TAG, AGENT_GROUP_INFO } from "@/lib/agents";
 import * as api from "@/lib/api";
 import type { AgentSkills, DiscoveredSkill } from "@/lib/api";
 
@@ -82,12 +82,30 @@ function AgentSection({ group, onOpen }: { group: AgentSkills; onOpen: (p: strin
   ]
     .filter(Boolean)
     .join(" · ");
+  const info = AGENT_GROUP_INFO[group.agent];
   return (
     <section>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: agentColor(group.agent) }} aria-hidden />
-        <h3 className="text-sm font-semibold text-fg">{group.agent}</h3>
-        <span className="text-xs text-faint">{group.skills.length}</span>
+      <div className="mb-3">
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: agentColor(group.agent) }} aria-hidden />
+          <h3 className="text-sm font-semibold text-fg">{group.agent}</h3>
+          <span className="text-xs text-faint">{group.skills.length}</span>
+        </div>
+        {info && (
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.72rem] text-muted">
+            <span>Shared standard — read by</span>
+            {info.sharedWith.map((a) => (
+              <span key={a} className="inline-flex items-center gap-1 rounded-full bg-panel px-1.5 py-0.5">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: agentColor(a) }} aria-hidden />
+                {a}
+              </span>
+            ))}
+            <span>&amp; more.</span>
+            {info.excludes.length > 0 && (
+              <span className="text-faint">Not {info.excludes.join(", ")} — it keeps its own folder.</span>
+            )}
+          </p>
+        )}
       </div>
       {own.length > 0 && (
         <div className={gridCls}>
@@ -264,7 +282,8 @@ export default function Home({
           </h2>
           {!discovering && totalFound === 0 ? (
             <p className="max-w-2xl text-sm text-muted">
-              No installed skills found. Skills live under <code className="font-mono text-[0.8em]">~/.claude/skills</code>,{" "}
+              No installed skills found. Skills live under <code className="font-mono text-[0.8em]">~/.agents/skills</code>,{" "}
+              <code className="font-mono text-[0.8em]">~/.claude/skills</code>,{" "}
               <code className="font-mono text-[0.8em]">~/.codex/skills</code>,{" "}
               <code className="font-mono text-[0.8em]">~/.cursor/skills-cursor</code>, and{" "}
               <code className="font-mono text-[0.8em]">~/.openclaw/skills</code>.

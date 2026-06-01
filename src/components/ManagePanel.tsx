@@ -196,6 +196,7 @@ function VersionSection({ root, dirName, kind }: { root: string; dirName: string
 function SyncSection({ root }: { root: string }) {
   const [targets, setTargets] = useState<SyncTarget[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [link, setLink] = useState(false); // copy by default; link = one shared copy
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const refresh = useCallback(() => {
@@ -208,13 +209,13 @@ function SyncSection({ root }: { root: string }) {
     refresh();
   }, [refresh]);
 
-  const doSync = async (agent: string, overwrite: boolean) => {
-    if (overwrite && !window.confirm(`Overwrite the existing "${agent}" copy with this version?`)) return;
-    setBusy(agent);
+  const doSync = async (t: SyncTarget, overwrite: boolean) => {
+    if (overwrite && !window.confirm(`Replace the existing copy in “${t.label}” with this version?`)) return;
+    setBusy(t.id);
     setMsg(null);
     try {
-      await api.syncSkill(root, agent, overwrite);
-      setMsg({ ok: true, text: `Synced to ${agent}.` });
+      const r = await api.syncSkill(root, t.id, overwrite, link);
+      setMsg({ ok: true, text: `${r.linked ? "Linked" : "Copied"} to ${t.label}.` });
       refresh();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Sync failed" });
@@ -231,26 +232,56 @@ function SyncSection({ root }: { root: string }) {
     );
   }
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-muted">Copy this skill into another agent’s personal skills so it’s available there too.</p>
-      <ul className="space-y-1.5">
+    <div className="space-y-2.5">
+      <p className="text-xs text-muted">
+        Make this skill available to your other agents. Most agents read the shared{" "}
+        <span className="font-medium text-fg">Agent Skills</span> directory; Claude Code keeps its own.
+      </p>
+
+      {/* Copy vs link mode */}
+      <div className="inline-flex rounded-md border border-border p-0.5 text-xs">
+        {[
+          { v: false, label: "Copy", hint: "Independent duplicate" },
+          { v: true, label: "Link", hint: "One shared copy — edits sync everywhere" },
+        ].map((o) => (
+          <button
+            key={o.label}
+            type="button"
+            onClick={() => setLink(o.v)}
+            title={o.hint}
+            className={`rounded px-2 py-0.5 ${link === o.v ? "bg-fg text-app" : "text-muted hover:text-fg"}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <ul className="space-y-2">
         {targets.map((t) => (
-          <li key={t.agent} className="flex items-center gap-2 text-sm">
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: agentColor(t.agent) }} aria-hidden />
-            <span className="text-fg">{t.agent}</span>
-            <span className="ml-auto flex items-center gap-2">
+          <li key={t.id} className="flex items-start gap-2 text-sm">
+            <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: agentColor(t.reaches[0] ?? t.label) }} aria-hidden />
+            <span className="min-w-0">
+              <span className="block text-fg">{t.label}</span>
+              <span className="block text-[0.7rem] text-faint">
+                Read by {t.reaches.join(", ")}
+                {t.id === "universal" ? " & more" : ""}
+              </span>
+            </span>
+            <span className="ml-auto flex shrink-0 items-center gap-2 pt-0.5">
               {t.isSource ? (
-                <span className="text-xs text-faint">Source</span>
+                <span className="text-xs text-faint" title={t.reachedVia ? `Lives in ${t.reachedVia}` : undefined}>
+                  Source
+                </span>
               ) : t.present ? (
                 <>
-                  <span className="text-xs text-ok">✓ Added</span>
-                  <button type="button" onClick={() => doSync(t.agent, true)} disabled={busy === t.agent} className="text-xs text-faint hover:text-fg">
+                  <span className="text-xs text-ok">✓ {t.linked ? "Linked" : "Added"}</span>
+                  <button type="button" onClick={() => doSync(t, true)} disabled={busy === t.id} className="text-xs text-faint hover:text-fg">
                     Update
                   </button>
                 </>
               ) : (
-                <button type="button" onClick={() => doSync(t.agent, false)} disabled={busy === t.agent} className={btnGhost}>
-                  {busy === t.agent ? "Adding…" : "Add"}
+                <button type="button" onClick={() => doSync(t, false)} disabled={busy === t.id} className={btnGhost}>
+                  {busy === t.id ? "…" : link ? "Link" : "Copy"}
                 </button>
               )}
             </span>
@@ -258,6 +289,56 @@ function SyncSection({ root }: { root: string }) {
         ))}
       </ul>
       {msg && <p className={`text-xs ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
+    </div>
+  );
+}
+
+// ---- Delete -----------------------------------------------------------------
+function DeleteSection({
+  root,
+  dirName,
+  kind,
+  onDeleted,
+}: {
+  root: string;
+  dirName: string;
+  kind: SkillKind;
+  onDeleted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const doDelete = async () => {
+    const lead =
+      kind === "personal"
+        ? `Delete “${dirName}”?`
+        : `“${dirName}” is a ${KIND_TAG[kind].label.toLowerCase()} skill. Delete it anyway?`;
+    if (!window.confirm(`${lead}\n\nThis permanently removes the skill folder from disk. A synced link is just unlinked; the original isn't touched.`)) {
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.deleteSkill(root);
+      onDeleted();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Delete failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted">Permanently remove this skill from disk. This can’t be undone.</p>
+      <button
+        type="button"
+        onClick={doDelete}
+        disabled={busy}
+        className="rounded-md border border-danger/40 px-3 py-1.5 text-sm font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-40"
+      >
+        {busy ? "Deleting…" : "Delete skill"}
+      </button>
+      {err && <p className="text-xs text-danger">{err}</p>}
     </div>
   );
 }
@@ -301,6 +382,7 @@ export default function ManagePanel({
   kind,
   declaredSecrets = [],
   onClose,
+  onDeleted,
 }: {
   root: string;
   dirName: string;
@@ -308,6 +390,8 @@ export default function ManagePanel({
   agent: string | null;
   declaredSecrets?: string[];
   onClose: () => void;
+  /** Called after the skill folder is deleted, so the host can navigate away. */
+  onDeleted: () => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -341,6 +425,9 @@ export default function ManagePanel({
           </Section>
           <Section title="Collaborate" badge={<PreviewBadge />}>
             <CollaborateSection />
+          </Section>
+          <Section title="Delete">
+            <DeleteSection root={root} dirName={dirName} kind={kind} onDeleted={onDeleted} />
           </Section>
         </div>
       </div>

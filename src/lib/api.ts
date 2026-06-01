@@ -150,19 +150,42 @@ export interface AgentSkills {
   skills: DiscoveredSkill[];
 }
 
-// --- sync a skill into another agent's personal dir ---
+// --- sync a skill into a shared/global skills dir other agents read ---
 export interface SyncTarget {
-  agent: string;
+  /** Stable id passed back to syncSkill ("universal" | "claude-code"). */
+  id: string;
+  label: string;
+  /** Canonical dir a new copy/link lands in. */
   dir: string;
+  /** Agent display names this destination serves. */
+  reaches: string[];
+  /** Already reachable from this destination. */
   present: boolean;
+  /** The skill natively lives here. */
   isSource: boolean;
+  /** Present via a symlink (a shared copy that tracks the source). */
+  linked: boolean;
+  /** When present via a legacy alias dir, its basename (e.g. ".codex/skills"). */
+  reachedVia?: string;
+}
+export interface SyncResult {
+  dest: string;
+  linked: boolean;
 }
 export const syncTargets = (root: string) =>
   isTauri ? invoke<SyncTarget[]>("sync_targets", { root }) : http<SyncTarget[]>("POST", "sync-targets", { root });
-export const syncSkill = (root: string, agent: string, overwrite: boolean) =>
+export const syncSkill = (root: string, target: string, overwrite: boolean, link: boolean) =>
   isTauri
-    ? invoke<{ dest: string }>("sync_skill", { root, agent, overwrite })
-    : http<{ dest: string }>("POST", "sync-skill", { root, agent, overwrite });
+    ? invoke<SyncResult>("sync_skill", { root, target, overwrite, link })
+    : http<SyncResult>("POST", "sync-skill", { root, target, overwrite, link });
+
+// --- delete a skill (guarded; unlinks a synced copy, else removes the folder) ---
+export interface DeleteResult {
+  removed: string;
+  wasLink: boolean;
+}
+export const deleteSkill = (root: string) =>
+  isTauri ? invoke<DeleteResult>("delete_skill", { root }) : http<DeleteResult>("POST", "delete-skill", { root });
 
 // --- per-skill git version control ---
 export interface GitInfo {

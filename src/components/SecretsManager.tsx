@@ -198,8 +198,9 @@ export default function SecretsManager({ declared = [] }: { declared?: string[] 
           </button>
         </div>
         <p className="text-[0.7rem] text-muted">
-          Installs the <span className="font-mono">skill-studio</span> skill into your agents so they can load these vars.
-          Run again after installing a new agent.
+          Installs the <span className="font-mono">skill-studio</span> skill into the shared{" "}
+          <span className="font-mono">~/.agents/skills</span> dir (and Claude Code’s own) so your agents can load these
+          vars. Run again after installing a new agent.
         </p>
         <ul className="flex flex-wrap gap-1.5">
           {status.agents.filter((a) => a.installed).length === 0 ? (

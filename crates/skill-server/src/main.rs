@@ -145,8 +145,10 @@ fn handle(method: &Method, url: &str, body: &str, dist: &Path) -> Reply {
         (Method::Post, "/api/sync-targets") => json_reply(sync::sync_targets(&s("root"))),
         (Method::Post, "/api/sync-skill") => {
             let overwrite = v.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false);
-            json_reply(sync::sync_skill(&s("root"), &s("agent"), overwrite))
+            let link = v.get("link").and_then(|x| x.as_bool()).unwrap_or(false);
+            json_reply(sync::sync_skill(&s("root"), &s("target"), overwrite, link))
         }
+        (Method::Post, "/api/delete-skill") => json_reply(sync::delete_skill(&s("root"))),
         (Method::Post, "/api/git-info") => json_reply(gitops::git_info(&s("root"))),
         (Method::Post, "/api/git-init") => json_reply(gitops::git_init(&s("root"))),
         (Method::Post, "/api/git-commit") => json_reply(gitops::git_commit(&s("root"), &s("message"))),

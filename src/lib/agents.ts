@@ -8,18 +8,39 @@ export const AGENT_COLORS: Record<string, string> = {
   Codex: "#10a37f",
   Cursor: "#7c83ff",
   OpenClaw: "#a855f7",
+  "Gemini CLI": "#4285f4",
+  // The Agent Skills standard shared dir (~/.agents/skills), read by many agents.
+  "Agent Skills": "#0ea5e9",
 };
 
 export function agentColor(label: string): string {
   return AGENT_COLORS[label] ?? "var(--muted)";
 }
 
+// Extra context for a discovery group's header. Used for the shared
+// `~/.agents/skills` standard dir, to make clear which agents read it (and which
+// don't) since it isn't a single agent's private folder.
+export interface AgentGroupInfo {
+  /** Agents that read this shared location (rendered as colored chips). */
+  sharedWith: string[];
+  /** Notable agents that do NOT read it. */
+  excludes: string[];
+}
+
+export const AGENT_GROUP_INFO: Record<string, AgentGroupInfo> = {
+  "Agent Skills": {
+    sharedWith: ["Codex", "Cursor", "Gemini CLI"],
+    excludes: ["Claude Code"],
+  },
+};
+
 const PATH_RULES: [RegExp, string][] = [
   [/(^|\/)\.claude(\/|$)/, "Claude Code"],
   [/(^|\/)\.codex(\/|$)/, "Codex"],
   [/(^|\/)\.cursor(\/|$)/, "Cursor"],
   [/(^|\/)\.openclaw(\/|$)/, "OpenClaw"],
-  [/(^|\/)\.agents(\/|$)/, "OpenClaw"],
+  // The Agent Skills standard shared dirs, ~/.agents/skills (and the singular variant).
+  [/(^|\/)\.agents?(\/|$)/, "Agent Skills"],
 ];
 
 /** Best-effort agent label for a skill path, or null for an unaffiliated folder. */

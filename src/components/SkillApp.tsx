@@ -89,6 +89,17 @@ export default function SkillApp({
     setLoadError(null);
   }, []);
 
+  // After a delete the folder is gone — drop back to Home without the
+  // unsaved-changes prompt (any pending edit is moot).
+  const afterDelete = useCallback(() => {
+    setManageOpen(false);
+    setData(null);
+    setSelected("SKILL.md");
+    setFileData(null);
+    setFileError(null);
+    setLoadError(null);
+  }, []);
+
   const selectFile = useCallback(
     async (rel: string) => {
       if (!data || rel === selected) return;
@@ -156,6 +167,7 @@ export default function SkillApp({
           agent={agentForPath(data.root)}
           declaredSecrets={declaredSecrets(data)}
           onClose={() => setManageOpen(false)}
+          onDeleted={afterDelete}
         />
       )}
     </div>

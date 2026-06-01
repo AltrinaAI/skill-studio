@@ -12,10 +12,47 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::sync::{agent_user_dir, copy_tree};
+use crate::sync::copy_tree;
 
-const AGENTS: [&str; 4] = ["Claude Code", "Codex", "Cursor", "OpenClaw"];
 const BOOTSTRAP_SKILL: &str = "skill-studio";
+
+/// An agent and the skills dirs (relative to home) it reads. Cohort agents list
+/// the shared `.agents/skills` standard dir first, so one copy there reaches all
+/// of them; Claude Code and OpenClaw read only their own folders.
+struct Agent {
+    name: &'static str,
+    /// Existence of this home dotdir = the agent is installed on this machine.
+    home_dotdir: &'static str,
+    /// Dirs (relative to home) where the activation skill would be reachable.
+    skill_dirs: &'static [&'static str],
+}
+
+const AGENTS: [Agent; 5] = [
+    Agent { name: "Claude Code", home_dotdir: ".claude", skill_dirs: &[".claude/skills"] },
+    Agent { name: "Codex", home_dotdir: ".codex", skill_dirs: &[".agents/skills", ".codex/skills"] },
+    Agent { name: "Cursor", home_dotdir: ".cursor", skill_dirs: &[".agents/skills", ".cursor/skills"] },
+    Agent { name: "Gemini CLI", home_dotdir: ".gemini", skill_dirs: &[".agents/skills", ".gemini/skills"] },
+    Agent { name: "OpenClaw", home_dotdir: ".openclaw", skill_dirs: &[".openclaw/skills"] },
+];
+
+/// Canonical locations the activation skill is installed into, each gated by the
+/// presence of any "trigger" home dotdir. The shared `.agents/skills` dir covers
+/// the whole standard cohort in a single copy.
+struct InstallDest {
+    skills_rel: &'static str,
+    triggers: &'static [&'static str],
+}
+
+const INSTALL_DESTS: [InstallDest; 3] = [
+    InstallDest { skills_rel: ".agents/skills", triggers: &[".agents", ".codex", ".cursor", ".gemini"] },
+    InstallDest { skills_rel: ".claude/skills", triggers: &[".claude"] },
+    InstallDest { skills_rel: ".openclaw/skills", triggers: &[".openclaw"] },
+];
+
+/// Per-agent legacy dirs now superseded by `.agents/skills`. A stale activation
+/// skill here is removed once the shared copy is in place, so agents that read
+/// both don't see it twice (and an older copy can't linger with outdated content).
+const LEGACY_SUPERSEDED: [&str; 2] = [".codex/skills", ".cursor/skills"];
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,21 +204,28 @@ pub fn secret_delete(key: &str) -> Result<(), String> {
     save_store(&map)
 }
 
-fn agent_base_dir(agent: &str) -> Option<PathBuf> {
-    agent_user_dir(agent).and_then(|d| d.parent().map(Path::to_path_buf))
+fn home() -> Result<PathBuf, String> {
+    dirs::home_dir().ok_or_else(|| "Cannot locate home directory.".to_string())
+}
+
+/// The activation skill is reachable by `a` if it's present in any dir it reads
+/// (the shared `.agents/skills` standard dir, or the agent's own folder).
+fn agent_has_skill(home: &Path, a: &Agent) -> bool {
+    a.skill_dirs
+        .iter()
+        .any(|d| home.join(d).join(BOOTSTRAP_SKILL).join("SKILL.md").exists())
 }
 
 pub fn secrets_status() -> Result<SecretsStatus, String> {
     let store = store_path()?;
     let env = env_path()?;
+    let home = home()?;
     let agents = AGENTS
         .iter()
         .map(|a| AgentInstall {
-            agent: (*a).to_string(),
-            installed: agent_base_dir(a).map(|d| d.exists()).unwrap_or(false),
-            has_skill: agent_user_dir(a)
-                .map(|d| d.join(BOOTSTRAP_SKILL).join("SKILL.md").exists())
-                .unwrap_or(false),
+            agent: a.name.to_string(),
+            installed: home.join(a.home_dotdir).exists(),
+            has_skill: agent_has_skill(&home, a),
         })
         .collect();
     Ok(SecretsStatus {
@@ -193,29 +237,47 @@ pub fn secrets_status() -> Result<SecretsStatus, String> {
     })
 }
 
-/// Copy the bundled `skill-studio` activation skill into every installed agent's
-/// skills dir, overwriting any prior copy. Returns the agents it installed to.
+/// Install the bundled `skill-studio` activation skill into the canonical shared
+/// location (and the holdouts that don't read it), rather than duplicating it
+/// into every agent's private dir. Consolidates onto `.agents/skills` and clears
+/// stale per-agent copies. Returns the agents now covered.
 pub fn install_bootstrap_skill(skill_src: &Path) -> Result<Vec<String>, String> {
+    install_bootstrap_skill_in(&home()?, skill_src)
+}
+
+fn install_bootstrap_skill_in(home: &Path, skill_src: &Path) -> Result<Vec<String>, String> {
     if !skill_src.join("SKILL.md").exists() {
         return Err("Bundled skill-studio skill not found.".into());
     }
-    let mut installed = Vec::new();
-    for agent in AGENTS {
-        let Some(base) = agent_base_dir(agent) else { continue };
-        if !base.exists() {
-            continue; // agent not installed on this machine
+    // Install into each canonical location whose cohort is present on this machine.
+    for dest in &INSTALL_DESTS {
+        if !dest.triggers.iter().any(|t| home.join(t).exists()) {
+            continue;
         }
-        let Some(skills_dir) = agent_user_dir(agent) else { continue };
-        let dest = skills_dir.join(BOOTSTRAP_SKILL);
-        if dest.exists() {
-            std::fs::remove_dir_all(&dest).map_err(|e| e.to_string())?;
+        let skills_dir = home.join(dest.skills_rel);
+        let target = skills_dir.join(BOOTSTRAP_SKILL);
+        if target.exists() {
+            std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
         }
         std::fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
         let mut total = 0;
-        copy_tree(skill_src, &dest, &mut total)?;
-        installed.push(agent.to_string());
+        copy_tree(skill_src, &target, &mut total)?;
     }
-    Ok(installed)
+    // Once the shared copy is in place, drop superseded per-agent copies so the
+    // cohort doesn't see the skill twice (and no stale older copy lingers).
+    if home.join(".agents/skills").join(BOOTSTRAP_SKILL).join("SKILL.md").exists() {
+        for legacy in LEGACY_SUPERSEDED {
+            let stale = home.join(legacy).join(BOOTSTRAP_SKILL);
+            if stale.exists() {
+                let _ = std::fs::remove_dir_all(&stale);
+            }
+        }
+    }
+    Ok(AGENTS
+        .iter()
+        .filter(|a| home.join(a.home_dotdir).exists() && agent_has_skill(home, a))
+        .map(|a| a.name.to_string())
+        .collect())
 }
 
 /// First-run setup: materialize the store + env file and (re)install the
@@ -254,6 +316,36 @@ mod tests {
         assert_eq!(sh_quote("abc"), "'abc'");
         assert_eq!(sh_quote("a b"), "'a b'");
         assert_eq!(sh_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn install_consolidates_to_shared_and_clears_legacy() {
+        let base = std::env::temp_dir().join(format!("ass_secrets_install_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        // Agents present: Codex (cohort → shared dir) and Claude Code (holdout).
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        // A stale per-agent copy from an older install lives in ~/.codex/skills.
+        let stale = home.join(".codex/skills/skill-studio");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("SKILL.md"), "old").unwrap();
+        // Bundled source skill.
+        let src = base.join("src/skill-studio");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("SKILL.md"), "new").unwrap();
+        std::fs::write(src.join("activate.sh"), "#!/usr/bin/env bash\n").unwrap();
+
+        let covered = install_bootstrap_skill_in(&home, &src).unwrap();
+
+        // Shared dir gets the copy; Claude Code gets its own; stale legacy cleared.
+        assert!(home.join(".agents/skills/skill-studio/SKILL.md").exists());
+        assert!(home.join(".claude/skills/skill-studio/SKILL.md").exists());
+        assert!(!stale.exists(), "stale ~/.codex/skills copy must be cleared");
+        assert!(!home.join(".codex/skills/skill-studio").exists());
+        assert!(covered.iter().any(|a| a == "Codex"), "Codex covered via shared dir");
+        assert!(covered.iter().any(|a| a == "Claude Code"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

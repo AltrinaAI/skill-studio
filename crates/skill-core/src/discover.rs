@@ -153,6 +153,7 @@ struct Groups {
     codex: Vec<DiscoveredSkill>,
     cursor: Vec<DiscoveredSkill>,
     openclaw: Vec<DiscoveredSkill>,
+    shared: Vec<DiscoveredSkill>,
 }
 
 fn push_to_agent(g: &mut Groups, agent: &str, skill: DiscoveredSkill) {
@@ -161,6 +162,7 @@ fn push_to_agent(g: &mut Groups, agent: &str, skill: DiscoveredSkill) {
         "Codex" => g.codex.push(skill),
         "Cursor" => g.cursor.push(skill),
         "OpenClaw" => g.openclaw.push(skill),
+        "Agent Skills" => g.shared.push(skill),
         _ => {}
     }
 }
@@ -302,12 +304,19 @@ pub fn discover_all() -> Result<Vec<AgentSkills>, String> {
 
     // OpenClaw — personal/local roots (bundled skills live in the read-only install dir).
     collect(&home.join(".openclaw/skills"), &|_: &Path| "personal", &mut g.openclaw, &mut seen);
-    collect(&home.join(".agents/skills"), &|_: &Path| "personal", &mut g.openclaw, &mut seen);
+
+    // Agent Skills standard shared dir — read by Codex, Cursor, Gemini CLI, and the
+    // broader cohort. Its own group so a skill synced here isn't mislabeled as one
+    // agent's. `.agent` (singular) is the minority variant (e.g. Antigravity).
+    collect(&home.join(".agents/skills"), &|_: &Path| "personal", &mut g.shared, &mut seen);
+    collect(&home.join(".agent/skills"), &|_: &Path| "personal", &mut g.shared, &mut seen);
 
     // Project-scoped skills in repos under the home directory.
     scan_projects(&home, &home, &mut g, &mut seen);
 
+    // Shared standard dir first — it's the most broadly-read location.
     Ok(vec![
+        AgentSkills { agent: "Agent Skills".into(), skills: g.shared },
         AgentSkills { agent: "Claude Code".into(), skills: g.claude },
         AgentSkills { agent: "Codex".into(), skills: g.codex },
         AgentSkills { agent: "Cursor".into(), skills: g.cursor },
@@ -407,7 +416,7 @@ mod tests {
     #[test]
     fn live_discovery_smoke() {
         let groups = discover_all().expect("discovery should not error");
-        assert_eq!(groups.len(), 4, "one group per agent");
+        assert_eq!(groups.len(), 5, "one group per agent + the shared Agent Skills dir");
         let total: usize = groups.iter().map(|g| g.skills.len()).sum();
         println!("\n=== live discovery: {total} skill(s) across {} agents ===", groups.len());
         for g in &groups {

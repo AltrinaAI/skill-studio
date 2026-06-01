@@ -57,8 +57,13 @@ async fn sync_targets(root: String) -> Result<Vec<sync::SyncTarget>, String> {
 }
 
 #[tauri::command]
-async fn sync_skill(root: String, agent: String, overwrite: bool) -> Result<sync::SyncResult, String> {
-    sync::sync_skill(&root, &agent, overwrite)
+async fn sync_skill(root: String, target: String, overwrite: bool, link: bool) -> Result<sync::SyncResult, String> {
+    sync::sync_skill(&root, &target, overwrite, link)
+}
+
+#[tauri::command]
+async fn delete_skill(root: String) -> Result<sync::DeleteResult, String> {
+    sync::delete_skill(&root)
 }
 
 #[tauri::command]
@@ -125,6 +130,7 @@ pub fn run() {
             export_skill_zip,
             sync_targets,
             sync_skill,
+            delete_skill,
             git_info,
             git_init,
             git_commit,
