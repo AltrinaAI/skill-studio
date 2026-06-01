@@ -238,6 +238,44 @@ export async function createSkill(target: string, name: string, description: str
     : http<string>("POST", "create-skill", { target, name, content });
 }
 
+// --- import an existing skill (folder or .zip) into a chosen skill home ---
+/** A `.env` pair carried by an imported skill (kept out of the copied folder). */
+export interface ImportedSecret {
+  key: string;
+  value: string;
+  /** A secret with this key already exists in the store (loading overwrites it). */
+  exists: boolean;
+}
+export interface ImportResult {
+  /** Canonical root of the imported skill — open it next. */
+  root: string;
+  /** The skill/folder name it was imported as. */
+  name: string;
+  /** The home directory it landed in. */
+  dir: string;
+  /** An existing skill of the same name was replaced. */
+  overwrote: boolean;
+  /** `.env` pairs found in the source, for optional loading into the secret store. */
+  env: ImportedSecret[];
+}
+
+/** Native file picker for a `.zip` (desktop only; browser uses a file input). */
+export const pickZipFile = () => invoke<string | null>("pick_zip_file");
+
+/** Copy an existing skill folder (by absolute path) into the chosen home. */
+export const importSkillFolder = (source: string, target: string, overwrite: boolean) =>
+  isTauri
+    ? invoke<ImportResult>("import_skill_folder", { source, target, overwrite })
+    : http<ImportResult>("POST", "import-folder", { source, target, overwrite });
+
+/** Desktop: import from a `.zip` on disk (the backend reads the path). */
+export const importSkillZipPath = (path: string, target: string, overwrite: boolean) =>
+  invoke<ImportResult>("import_skill_zip", { path, target, overwrite });
+
+/** Browser: import from an uploaded `.zip` (base64 bytes, decoded server-side). */
+export const importSkillZipUpload = (data: string, target: string, overwrite: boolean) =>
+  http<ImportResult>("POST", "import-zip", { data, target, overwrite });
+
 // --- delete a skill (guarded; unlinks a synced copy, else removes the folder) ---
 export interface DeleteResult {
   removed: string;

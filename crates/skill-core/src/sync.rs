@@ -10,10 +10,17 @@
 // are still honored for *presence* detection so we never offer to add a skill an
 // agent can already see (which would make it show up twice in its picker).
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::Serialize;
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+
+use crate::pathsafe::resolve_root;
 
 const IGNORED_DIRS: [&str; 5] = [".git", "node_modules", ".next", "__pycache__", ".venv"];
+
+/// Bumped per zip import to give each one a unique staging dir (no time/rand dep).
+static IMPORT_SEQ: AtomicU64 = AtomicU64::new(0);
 const MAX_TOTAL: u64 = 100 * 1024 * 1024; // 100 MB
 
 /// A place a skill can be synced to. `cohort` lists the dirs (relative to home)
@@ -90,6 +97,34 @@ pub struct SkillHome {
     dir: String,
     /// Agent display names this location serves.
     reaches: Vec<String>,
+}
+
+/// A `.env` pair pulled out of an imported skill (kept OUT of the copied folder),
+/// offered to the secret store instead of written to disk.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedSecret {
+    key: String,
+    value: String,
+    /// A secret with this key already exists in the store (loading overwrites it).
+    exists: bool,
+}
+
+/// Outcome of importing a skill (from a folder or a `.zip`) into a chosen home.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    /// Canonical root path of the imported skill — open it next.
+    root: String,
+    /// The skill/folder name it was imported as.
+    name: String,
+    /// The home directory it landed in.
+    dir: String,
+    /// An existing skill of the same name was replaced.
+    overwrote: bool,
+    /// `.env` pairs found in the source (not copied into the skill) so the caller
+    /// can offer to load them into the secret store. Empty when there was no `.env`.
+    env: Vec<ImportedSecret>,
 }
 
 /// The personal/global skills directory each agent reads. Kept for the secret
@@ -268,6 +303,139 @@ fn create_skill_in(home: &Path, target: &str, name: &str, content: &str) -> Resu
     std::fs::write(dest.join("SKILL.md"), content).map_err(|e| e.to_string())?;
     let canon = std::fs::canonicalize(&dest).unwrap_or(dest);
     Ok(canon.to_string_lossy().into_owned())
+}
+
+/// Import an existing skill *folder* into a chosen home (`target` is a skill-home
+/// id). Copies the tree under the skill's name — refusing to clobber unless
+/// `overwrite` — and returns the new root plus any `.env` pairs (kept out of the
+/// copy) for the caller to optionally load into the secret store.
+pub fn import_skill_folder(source: &str, target: &str, overwrite: bool) -> Result<ImportResult, String> {
+    let home = dirs::home_dir().ok_or_else(|| "No home directory.".to_string())?;
+    let src = resolve_root(source);
+    if !src.join("SKILL.md").exists() {
+        return Err("Not a skill folder (no SKILL.md).".into());
+    }
+    import_from_dir(&home, &src, target, overwrite)
+}
+
+/// Import a skill from a `.zip` archive's bytes (the inverse of export). Extracts to
+/// a temp dir, imports it like a folder, then cleans up. Used by the desktop app
+/// (reads the chosen file) and the server (base64 upload via [`import_skill_zip_base64`]).
+pub fn import_skill_zip(bytes: &[u8], target: &str, overwrite: bool) -> Result<ImportResult, String> {
+    let home = dirs::home_dir().ok_or_else(|| "No home directory.".to_string())?;
+    let seq = IMPORT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let staging = std::env::temp_dir().join(format!("ass_import_{}_{}", std::process::id(), seq));
+    let _ = std::fs::remove_dir_all(&staging);
+    let result = (|| {
+        let skill_root = crate::skill::extract_zip(bytes, &staging)?;
+        import_from_dir(&home, &skill_root, target, overwrite)
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+/// Convenience for the HTTP server (whose JSON bodies are text): decode a base64'd
+/// (optionally `data:` URL-prefixed) zip, then import it.
+pub fn import_skill_zip_base64(data: &str, target: &str, overwrite: bool) -> Result<ImportResult, String> {
+    // Tolerate a `data:application/zip;base64,…` prefix (base64 has no comma).
+    let b64 = data.rsplit(',').next().unwrap_or(data).trim();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("Invalid base64 upload: {e}"))?;
+    import_skill_zip(&bytes, target, overwrite)
+}
+
+/// Shared core: validate the staged skill dir, resolve its destination name, copy
+/// it into the home (minus any `.env`), and report the `.env` pairs separately.
+fn import_from_dir(home: &Path, src: &Path, target: &str, overwrite: bool) -> Result<ImportResult, String> {
+    // Destination name: the skill's declared `name` when valid (so the result is
+    // spec-valid, name == folder), else the source directory name.
+    let raw = std::fs::read_to_string(src.join("SKILL.md"))
+        .map_err(|e| format!("Failed to read SKILL.md: {e}"))?;
+    let declared = frontmatter_name(&raw).filter(|n| valid_skill_name(n));
+    let dir_name = skill_dir_name(src).filter(|n| valid_skill_name(n));
+    let name = declared.or(dir_name).ok_or_else(|| {
+        "Couldn't determine a valid skill name — the SKILL.md `name` and folder name are both invalid.".to_string()
+    })?;
+
+    let d = dest_by_id(target).ok_or_else(|| format!("Unknown skill location: {target}"))?;
+    let dir = home.join(d.cohort[0]);
+    let dest = dir.join(&name);
+
+    // Importing an already-installed skill onto itself would copy a dir into itself.
+    let canon_src = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
+    let dest_is_self =
+        !is_symlink(&dest) && std::fs::canonicalize(&dest).map(|c| c == canon_src).unwrap_or(false);
+    if dest_is_self {
+        return Err("This skill already lives in the chosen location.".into());
+    }
+
+    // Read any bundled `.env` from the SOURCE before we copy (we won't copy it in).
+    let env = read_env_pairs(src);
+
+    let mut overwrote = false;
+    if dest.symlink_metadata().is_ok() {
+        if !overwrite {
+            return Err(format!("A skill named \"{name}\" already exists here."));
+        }
+        remove_path(&dest)?;
+        overwrote = true;
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut total: u64 = 0;
+    copy_tree(src, &dest, &mut total)?;
+    // copy_tree brings every file; keep secrets out of the imported folder.
+    let _ = std::fs::remove_file(dest.join(".env"));
+
+    let canon = std::fs::canonicalize(&dest).unwrap_or(dest);
+    Ok(ImportResult {
+        root: canon.to_string_lossy().into_owned(),
+        name,
+        dir: dir.to_string_lossy().into_owned(),
+        overwrote,
+        env,
+    })
+}
+
+/// Parse a skill's root `.env` (if any) into pairs, flagging keys already present
+/// in the secret store. Never reads nested `.env` files (export only writes one at root).
+fn read_env_pairs(skill_root: &Path) -> Vec<ImportedSecret> {
+    let Ok(body) = std::fs::read_to_string(skill_root.join(".env")) else {
+        return Vec::new();
+    };
+    let existing: std::collections::HashSet<String> =
+        crate::secrets::secret_keys().unwrap_or_default().into_iter().collect();
+    crate::secrets::parse_dotenv(&body)
+        .into_iter()
+        .map(|(key, value)| {
+            let exists = existing.contains(&key);
+            ImportedSecret { key, value, exists }
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct FmName {
+    name: Option<String>,
+}
+
+/// Best-effort read of `name:` from a SKILL.md's YAML frontmatter block (no regex
+/// dep): the document must open with a `---` line and close with another.
+fn frontmatter_name(raw: &str) -> Option<String> {
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    let mut lines = raw.lines();
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    let mut block = String::new();
+    for line in lines {
+        if line.trim_end() == "---" {
+            return serde_yaml::from_str::<FmName>(&block).ok().and_then(|f| f.name);
+        }
+        block.push_str(line);
+        block.push('\n');
+    }
+    None
 }
 
 /// Permanently remove a skill folder. Guarded: it must contain SKILL.md and live
@@ -479,6 +647,65 @@ mod tests {
         assert!(create_skill_in(&home, "claude-code", "Bad Name", content).is_err());
         // Unknown destination is rejected.
         assert!(create_skill_in(&home, "nope", "ok-name", content).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn imports_folder_naming_by_frontmatter_and_strips_env() {
+        let base = std::env::temp_dir().join(format!("ass_import_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        // Source folder is named differently from the skill's declared name — the
+        // import should land under the declared name (spec-valid: name == folder).
+        let src = base.join("download/my-skill (1)");
+        std::fs::create_dir_all(src.join("scripts")).unwrap();
+        std::fs::write(
+            src.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: A test skill.\n---\n\nBody.\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("scripts/run.py"), "print(1)").unwrap();
+        std::fs::write(src.join(".env"), "TOKEN='secret-value'\n").unwrap();
+
+        let r = import_from_dir(&home, &src, "universal", false).unwrap();
+        assert_eq!(r.name, "my-skill");
+        let dest = home.join(".agents/skills/my-skill");
+        assert!(dest.join("SKILL.md").exists());
+        assert!(dest.join("scripts/run.py").exists());
+        assert!(!dest.join(".env").exists(), ".env must be kept out of the imported folder");
+        assert_eq!(r.env.len(), 1);
+        assert_eq!(r.env[0].key, "TOKEN");
+        assert_eq!(r.env[0].value, "secret-value");
+
+        // Re-importing without overwrite is refused; with overwrite it replaces.
+        assert!(import_from_dir(&home, &src, "universal", false).is_err());
+        assert!(import_from_dir(&home, &src, "universal", true).unwrap().overwrote);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn imports_from_zip_bytes_via_extract() {
+        let base = std::env::temp_dir().join(format!("ass_import_zip_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        // Build a skill, zip it (the export path), then extract+import the bytes.
+        let src = base.join("src/zipped-skill");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("SKILL.md"),
+            "---\nname: zipped-skill\ndescription: From a zip.\n---\n\nBody.\n",
+        )
+        .unwrap();
+        let (_, bytes) = crate::skill::zip_skill_bytes(&src.to_string_lossy(), &[]).unwrap();
+
+        let staging = base.join("staging");
+        let skill_root = crate::skill::extract_zip(&bytes, &staging).unwrap();
+        assert!(skill_root.join("SKILL.md").exists());
+        let r = import_from_dir(&home, &skill_root, "claude-code", false).unwrap();
+        assert_eq!(r.name, "zipped-skill");
+        assert!(home.join(".claude/skills/zipped-skill/SKILL.md").exists());
 
         let _ = std::fs::remove_dir_all(&base);
     }

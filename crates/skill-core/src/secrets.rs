@@ -233,6 +233,64 @@ pub fn render_dotenv(names: &[String]) -> Result<String, String> {
     Ok(body)
 }
 
+/// Parse a `.env` body into (key, value) pairs — the inverse of [`dotenv_quote`],
+/// tolerant of `export ` prefixes, `#` comments, blank lines, and single/double
+/// quoted values. Entries whose key isn't a valid env-var name are skipped. Used
+/// by skill import to offer a bundled `.env` to the secret store instead of writing
+/// it into the imported folder.
+pub fn parse_dotenv(body: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+        let Some((key, raw)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !valid_key(key) {
+            continue;
+        }
+        out.push((key.to_string(), unquote_dotenv(raw.trim())));
+    }
+    out
+}
+
+/// Strip matching single/double quotes from a dotenv value; double-quoted values
+/// have their `\n \r \" \\` escapes resolved (matching [`dotenv_quote`]).
+fn unquote_dotenv(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    if n >= 2 && bytes[0] == b'\'' && bytes[n - 1] == b'\'' {
+        return s[1..n - 1].to_string();
+    }
+    if n >= 2 && bytes[0] == b'"' && bytes[n - 1] == b'"' {
+        let mut out = String::with_capacity(n - 2);
+        let mut chars = s[1..n - 1].chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => out.push('\n'),
+                    Some('r') => out.push('\r'),
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        return out;
+    }
+    s.to_string()
+}
+
 pub fn secret_set(key: &str, value: &str) -> Result<(), String> {
     let key = key.trim();
     if !valid_key(key) {
@@ -394,6 +452,25 @@ mod tests {
         assert!(covered.iter().any(|a| a == "Codex"), "Codex covered via shared dir");
         assert!(covered.iter().any(|a| a == "Claude Code"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn dotenv_parse_inverts_render() {
+        // render_dotenv → parse_dotenv round-trips both quoting styles.
+        let single = "API='hello world'\n";
+        let double = "TOK=\"it's\\n\"\n";
+        let mut pairs = parse_dotenv(single);
+        pairs.extend(parse_dotenv(double));
+        assert_eq!(pairs[0], ("API".to_string(), "hello world".to_string()));
+        assert_eq!(pairs[1], ("TOK".to_string(), "it's\n".to_string()));
+
+        // Tolerates `export `, comments, blanks; skips invalid keys + junk lines.
+        let messy = "# comment\n\nexport FOO=bar\n1BAD=x\nnokeyvalue\nBAZ='q'\n";
+        let got = parse_dotenv(messy);
+        assert_eq!(
+            got,
+            vec![("FOO".to_string(), "bar".to_string()), ("BAZ".to_string(), "q".to_string())]
+        );
     }
 
     #[test]

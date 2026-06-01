@@ -6,6 +6,7 @@ import NavBar from "./NavBar";
 import { FolderIcon } from "./FileIcon";
 import FolderPicker from "./FolderPicker";
 import NewSkillDialog from "./NewSkillDialog";
+import ImportSkillDialog from "./ImportSkillDialog";
 import SecretsManager from "./SecretsManager";
 import { useRecents, removeRecent } from "./recents";
 import { agentColor, kindMeta, KIND_TAG, AGENT_GROUP_INFO } from "@/lib/agents";
@@ -25,6 +26,15 @@ function PlusIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+function ImportIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3v10" />
+      <path d="m8 9 4 4 4-4" />
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
     </svg>
   );
 }
@@ -163,6 +173,7 @@ export default function Home({
   const [path, setPath] = useState("");
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     if (!secretsOpen) return;
@@ -210,6 +221,15 @@ export default function Home({
         </button>
         <button
           type="button"
+          onClick={() => setImportOpen(true)}
+          title="Import a skill from a folder or .zip"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted hover:bg-panel hover:text-fg"
+        >
+          <ImportIcon />
+          <span className="hidden text-xs sm:inline">Import</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setSecretsOpen(true)}
           title="Secrets"
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted hover:bg-panel hover:text-fg"
@@ -226,7 +246,11 @@ export default function Home({
           <p className="mt-1.5 text-sm text-muted">
             A skill is a folder containing a{" "}
             <code className="rounded bg-panel px-1 py-0.5 font-mono text-[0.8em]">SKILL.md</code>. Browse for one, paste a
-            path, pick from the skills found on your machine below, or{" "}
+            path, pick from the skills found on your machine below,{" "}
+            <button type="button" onClick={() => setImportOpen(true)} className="font-medium text-accent underline hover:opacity-80">
+              import a folder or .zip
+            </button>
+            , or{" "}
             <button type="button" onClick={() => setNewOpen(true)} className="font-medium text-accent underline hover:opacity-80">
               create a new one
             </button>
@@ -347,6 +371,16 @@ export default function Home({
           onClose={() => setNewOpen(false)}
           onCreated={(root) => {
             setNewOpen(false);
+            onOpen(root);
+          }}
+        />
+      )}
+
+      {importOpen && (
+        <ImportSkillDialog
+          onClose={() => setImportOpen(false)}
+          onImported={(root) => {
+            setImportOpen(false);
             onOpen(root);
           }}
         />

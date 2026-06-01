@@ -1,7 +1,7 @@
 // Filesystem layer, ported from the original lib/server.ts. Transport-agnostic
 // (no Tauri) — reused by the desktop commands and the headless server.
 use std::collections::BTreeSet;
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
@@ -423,6 +423,62 @@ fn walk_zip(
         }
     }
     Ok(())
+}
+
+/// Extract a `.zip`'s bytes into `dest_dir`, returning the directory that holds
+/// SKILL.md — the inverse of [`zip_skill_bytes`]. Defends against zip-slip (entries
+/// that escape `dest_dir` via `..`/absolute paths) and the 100 MB total cap. The
+/// returned path is `dest_dir` itself when SKILL.md sits at the archive root, or the
+/// single wrapping subdir (our export's `name/SKILL.md` layout).
+pub fn extract_zip(bytes: &[u8], dest_dir: &Path) -> Result<PathBuf, String> {
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("Not a valid .zip: {e}"))?;
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    let mut total: u64 = 0;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        // `enclosed_name` is None for any entry that would escape the root.
+        let out = match entry.enclosed_name() {
+            Some(rel) => dest_dir.join(rel),
+            None => return Err("Refusing to extract: the archive contains an unsafe path.".into()),
+        };
+        if !out.starts_with(dest_dir) {
+            return Err("Refusing to extract: the archive contains an unsafe path.".into());
+        }
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        total += entry.size();
+        if total > MAX_TOTAL {
+            return Err("Archive is too large to import.".into());
+        }
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        std::fs::write(&out, &buf).map_err(|e| e.to_string())?;
+    }
+    find_skill_root(dest_dir).ok_or_else(|| "The archive has no SKILL.md (not a skill).".into())
+}
+
+/// Locate the directory containing SKILL.md: `base` itself, or a single top-level
+/// subdirectory (the common `name/SKILL.md` layout). Searches one level deep.
+fn find_skill_root(base: &Path) -> Option<PathBuf> {
+    if base.join("SKILL.md").exists() {
+        return Some(base.to_path_buf());
+    }
+    let rd = std::fs::read_dir(base).ok()?;
+    for entry in rd.filter_map(|e| e.ok()) {
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let cand = entry.path();
+            if cand.join("SKILL.md").exists() {
+                return Some(cand);
+            }
+        }
+    }
+    None
 }
 
 /// Scan a skill's text files for which of `candidates` (env-var names) appear as

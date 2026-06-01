@@ -52,6 +52,27 @@ async fn export_skill_zip(app: tauri::AppHandle, root: String, env_vars: Vec<Str
 }
 
 #[tauri::command]
+async fn pick_zip_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(app
+        .dialog()
+        .file()
+        .add_filter("Zip archive", &["zip"])
+        .blocking_pick_file()
+        .map(|p| p.to_string()))
+}
+
+#[tauri::command]
+async fn import_skill_folder(source: String, target: String, overwrite: bool) -> Result<sync::ImportResult, String> {
+    sync::import_skill_folder(&source, &target, overwrite)
+}
+
+#[tauri::command]
+async fn import_skill_zip(path: String, target: String, overwrite: bool) -> Result<sync::ImportResult, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    sync::import_skill_zip(&bytes, &target, overwrite)
+}
+
+#[tauri::command]
 async fn detect_required_env(root: String) -> Result<Vec<String>, String> {
     let candidates = secrets::secret_keys()?;
     Ok(skill::scan_for_env_vars(std::path::Path::new(&root), &candidates))
@@ -143,7 +164,10 @@ pub fn run() {
             read_image_base64,
             discover_skills,
             pick_skill_folder,
+            pick_zip_file,
             export_skill_zip,
+            import_skill_folder,
+            import_skill_zip,
             detect_required_env,
             sync_targets,
             sync_skill,

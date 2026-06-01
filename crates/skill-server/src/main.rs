@@ -153,6 +153,15 @@ fn handle(method: &Method, url: &str, body: &str, dist: &Path) -> Reply {
         (Method::Post, "/api/create-skill") => {
             json_reply(sync::create_skill(&s("target"), &s("name"), &s("content")))
         }
+        (Method::Post, "/api/import-folder") => {
+            let overwrite = v.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false);
+            json_reply(sync::import_skill_folder(&s("source"), &s("target"), overwrite))
+        }
+        (Method::Post, "/api/import-zip") => {
+            // `data` is the .zip base64-encoded (the JSON body must stay UTF-8 text).
+            let overwrite = v.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false);
+            json_reply(sync::import_skill_zip_base64(&s("data"), &s("target"), overwrite))
+        }
         (Method::Post, "/api/detect-required-env") => {
             let root = s("root");
             json_reply(secrets::secret_keys().map(|keys| skill::scan_for_env_vars(Path::new(&root), &keys)))
