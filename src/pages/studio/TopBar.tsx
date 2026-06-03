@@ -42,8 +42,9 @@ export default function TopBar({
   onHome,
   skillName,
   selected,
-  historyActive,
-  onHistory,
+  reviewMode,
+  showReview,
+  onToggleReview,
   onManage,
   onExport,
   toggleTheme,
@@ -51,8 +52,11 @@ export default function TopBar({
   onHome: () => void;
   skillName: string;
   selected: string | null;
-  historyActive: boolean;
-  onHistory: () => void;
+  /** The diff overlay is currently on for the open file. */
+  reviewMode: boolean;
+  /** The open file can be reviewed (tracked + has changes) — show the toggle. */
+  showReview: boolean;
+  onToggleReview: () => void;
   onManage: () => void;
   onExport: () => void;
   toggleTheme: () => void;
@@ -78,22 +82,22 @@ export default function TopBar({
       }
     >
       <SaveButton />
-      <button
-        type="button"
-        onClick={onHistory}
-        title="Git history, diffs & uncommitted changes"
-        aria-pressed={historyActive}
-        className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-panel hover:text-fg ${
-          historyActive ? "bg-panel text-fg" : "text-muted"
-        }`}
-      >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-          <path d="M3 3v5h5" />
-          <path d="M12 7v5l3 2" />
-        </svg>
-        <span className="hidden sm:inline">History</span>
-      </button>
+      {showReview && (
+        <button
+          type="button"
+          onClick={onToggleReview}
+          aria-pressed={reviewMode}
+          title="Review change mode — show changes since the last commit"
+          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+            reviewMode ? "bg-accent text-white hover:opacity-90" : "text-muted hover:bg-panel hover:text-fg"
+          }`}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 3v12M9 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM9 3a3 3 0 1 0 0 0M18 9v6M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 6c0 3-3 3-9 3" />
+          </svg>
+          <span className="hidden sm:inline">Review changes</span>
+        </button>
+      )}
       <button
         type="button"
         onClick={onManage}

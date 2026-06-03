@@ -412,6 +412,74 @@ pub fn git_commit_diff(root: &str, sha: &str) -> Result<CommitDetail, String> {
     })
 }
 
+/// The contents of `path` at revision `rev` (e.g. "HEAD") — the "original" the
+/// in-editor diff overlay compares the working buffer against. Returns "" when
+/// the file doesn't exist at that rev (a newly added file), so the whole file
+/// reads as an addition. `rev` must be "HEAD" or a hex SHA; `path` is relative
+/// to `root` and rides as one `rev:./path` arg (the `./` resolves it against the
+/// cwd `root`, not the repo top-level, and stops it being read as an option).
+pub fn git_file_at(root: &str, rev: &str, path: &str) -> Result<String, String> {
+    if !git_available() {
+        return Err("Git isn't installed.".into());
+    }
+    if rev != "HEAD" && !is_hex_rev(rev) {
+        return Err("Invalid revision.".into());
+    }
+    let rel = path.trim_start_matches("./");
+    let out = git(&PathBuf::from(root), &["show", &format!("{rev}:./{rel}")])?;
+    if !out.status.success() {
+        return Ok(String::new()); // absent at that rev → treat as empty (added)
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Discard one path's working-tree changes back to HEAD: a tracked file is
+/// restored (index + worktree); an untracked file is removed. `path` is kept
+/// inside `root` and passed after `--` so it can't be read as an option.
+pub fn git_discard(root: &str, path: &str) -> Result<(), String> {
+    if !git_available() {
+        return Err("Git isn't installed.".into());
+    }
+    let root_path = PathBuf::from(root);
+    crate::pathsafe::safe_resolve(&root_path, path)?; // reject `..` / absolute escapes
+    let tracked = git(&root_path, &["ls-files", "--error-unmatch", "--", path])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let out = if tracked {
+        // git >= 2.23: restore index + worktree to HEAD. Fall back to checkout.
+        let r = git(&root_path, &["restore", "--staged", "--worktree", "--", path])?;
+        if r.status.success() {
+            r
+        } else {
+            git(&root_path, &["checkout", "HEAD", "--", path])?
+        }
+    } else {
+        git(&root_path, &["clean", "-f", "--", path])? // untracked → remove
+    };
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+/// Discard ALL uncommitted changes back to HEAD (tracked restored, untracked
+/// removed). Destructive — callers must confirm first.
+pub fn git_discard_all(root: &str) -> Result<(), String> {
+    if !git_available() {
+        return Err("Git isn't installed.".into());
+    }
+    let root_path = PathBuf::from(root);
+    let r = git(&root_path, &["restore", "--staged", "--worktree", "."])?;
+    if !r.status.success() {
+        let _ = git(&root_path, &["checkout", "HEAD", "--", "."]);
+    }
+    let c = git(&root_path, &["clean", "-fd"])?;
+    if !c.status.success() {
+        return Err(String::from_utf8_lossy(&c.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +556,21 @@ mod tests {
         assert!(wt.diff.contains("NOTES.md") && wt.diff.contains("+fresh"));
         assert!(wt.diff.contains("-dash.md") && wt.diff.contains("+dashed"));
         assert!(!wt.truncated);
+
+        // File-at-rev: SKILL.md exists at HEAD (its committed text); a never-
+        // committed path returns "" (so the overlay shows it all as added).
+        let at_head = git_file_at(&root, "HEAD", "SKILL.md").unwrap();
+        assert!(at_head.contains("name: t") && !at_head.contains("hi there"));
+        assert_eq!(git_file_at(&root, "HEAD", "NOTES.md").unwrap(), "");
+        assert!(git_file_at(&root, "zzz", "SKILL.md").is_err()); // non-hex rev rejected
+
+        // Discard: a tracked file is restored to HEAD, an untracked file removed.
+        git_discard(&root, "SKILL.md").unwrap();
+        let restored = std::fs::read_to_string(base.join("SKILL.md")).unwrap();
+        assert!(restored.contains("name: t") && !restored.contains("hi there"));
+        git_discard(&root, "NOTES.md").unwrap();
+        assert!(!base.join("NOTES.md").exists());
+        assert!(git_discard(&root, "../escape").is_err()); // traversal rejected
 
         let _ = std::fs::remove_dir_all(&base);
     }

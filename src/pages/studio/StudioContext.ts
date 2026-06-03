@@ -7,8 +7,15 @@ export interface StudioContextValue {
   /** Bumped when `data` is replaced for the same root (a post-save hook rewrote
    *  SKILL.md) so the mount-initialized document editor remounts with fresh data. */
   docVersion: number;
+  /** Bumped whenever git state changes from within the app (commit / discard) so
+   *  open diff overlays refetch their HEAD baseline. */
+  gitVersion: number;
   /** Run the post-save pipeline for the file just saved (rel=null => SKILL.md). */
   afterSave: (rel: string | null) => Promise<void>;
+  /** Re-read the skill from disk after an external content change (e.g. a discard
+   *  reverted a file): refreshes `data`, bumps gitVersion, and remounts the editor
+   *  (docVersion) unless it's mid-edit. */
+  reload: () => void;
 }
 
 const SkillCtx = createContext<StudioContextValue | null>(null);

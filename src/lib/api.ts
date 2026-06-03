@@ -371,6 +371,23 @@ export const gitCommitDiff = (root: string, sha: string) =>
   isTauri
     ? invoke<GitCommitDetail>("git_commit_diff", { root, sha })
     : http<GitCommitDetail>("POST", "git-commit-diff", { root, sha });
+/** The file's content at a revision ("HEAD" or a SHA) — the "original" the
+ *  in-editor diff overlay compares against. Empty string when absent at that rev. */
+export const gitFileAt = (root: string, rev: string, path: string) =>
+  isTauri
+    ? invoke<string>("git_file_at", { root, rev, path })
+    : http<string>("POST", "git-file-at", { root, rev, path });
+/** Discard one path's working-tree changes back to HEAD (tracked → restore,
+ *  untracked → delete). Destructive — confirm before calling. */
+export const gitDiscard = (root: string, path: string) =>
+  isTauri
+    ? invoke<void>("git_discard", { root, path })
+    : http<{ ok: boolean }>("POST", "git-discard", { root, path }).then(() => {});
+/** Discard ALL uncommitted changes back to HEAD. Destructive — confirm first. */
+export const gitDiscardAll = (root: string) =>
+  isTauri
+    ? invoke<void>("git_discard_all", { root })
+    : http<{ ok: boolean }>("POST", "git-discard-all", { root }).then(() => {});
 
 // --- secret manager (machine-local env vars for skills) ---
 export interface SecretEntry {

@@ -151,6 +151,21 @@ async fn git_commit_diff(root: String, sha: String) -> Result<gitops::CommitDeta
 }
 
 #[tauri::command]
+async fn git_file_at(root: String, rev: String, path: String) -> Result<String, String> {
+    gitops::git_file_at(&root, &rev, &path)
+}
+
+#[tauri::command]
+async fn git_discard(root: String, path: String) -> Result<(), String> {
+    gitops::git_discard(&root, &path)
+}
+
+#[tauri::command]
+async fn git_discard_all(root: String) -> Result<(), String> {
+    gitops::git_discard_all(&root)
+}
+
+#[tauri::command]
 async fn secrets_status() -> Result<secrets::SecretsStatus, String> {
     secrets::secrets_status()
 }
@@ -288,6 +303,9 @@ pub fn run() {
             git_status,
             git_worktree_diff,
             git_commit_diff,
+            git_file_at,
+            git_discard,
+            git_discard_all,
             secrets_status,
             secrets_list,
             secret_set,

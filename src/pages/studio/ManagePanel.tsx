@@ -33,17 +33,7 @@ function PreviewBadge() {
 }
 
 // ---- Version (git) ----------------------------------------------------------
-function VersionSection({
-  root,
-  dirName,
-  kind,
-  onViewHistory,
-}: {
-  root: string;
-  dirName: string;
-  kind: SkillKind;
-  onViewHistory: () => void;
-}) {
+function VersionSection({ root, dirName, kind }: { root: string; dirName: string; kind: SkillKind }) {
   const [info, setInfo] = useState<GitInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [log, setLog] = useState<GitCommit[]>([]);
@@ -206,17 +196,6 @@ function VersionSection({
               ))}
             </ul>
           )}
-
-          <button
-            type="button"
-            onClick={onViewHistory}
-            className="flex items-center gap-1 text-xs font-medium text-accent hover:underline"
-          >
-            View full history &amp; diffs
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
-          </button>
         </>
       )}
       {err && <p className="text-xs text-danger">{err}</p>}
@@ -413,15 +392,12 @@ export default function ManagePanel({
   dirName,
   kind,
   onClose,
-  onViewHistory,
   onDeleted,
 }: {
   root: string;
   dirName: string;
   kind: SkillKind;
   onClose: () => void;
-  /** Open the full git history & diffs view (closes this drawer). */
-  onViewHistory: () => void;
   /** Called after the skill folder is deleted, so the host can navigate away. */
   onDeleted: () => void;
 }) {
@@ -447,7 +423,7 @@ export default function ManagePanel({
 
         <div className="min-h-0 flex-1 overflow-auto">
           <Section title="Version">
-            <VersionSection root={root} dirName={dirName} kind={kind} onViewHistory={onViewHistory} />
+            <VersionSection root={root} dirName={dirName} kind={kind} />
           </Section>
           <Section title="Secrets">
             <SecretsManager />

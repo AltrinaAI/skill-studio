@@ -4,6 +4,7 @@ import { Spinner } from "@/components/ui";
 import NavBar from "@/components/NavBar";
 import { addRecent } from "@/lib/recents";
 import { skillKind } from "@/lib/agents";
+import { loadSkill } from "@/lib/api";
 import type { SkillData } from "@/lib/types";
 import { reconcileRequiredEnv, runSaveHooks } from "./saveHooks";
 import { isEditorDirty } from "@/lib/editorState";
@@ -21,6 +22,7 @@ export function Component() {
   const [data, setData] = useState<SkillData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [docVersion, setDocVersion] = useState(0);
+  const [gitVersion, setGitVersion] = useState(0);
 
   // Live `data` for async callbacks that may resolve after a navigation.
   const dataRef = useRef<SkillData | null>(null);
@@ -70,10 +72,31 @@ export function Component() {
     }
   }, []);
 
+  // Git changed on disk from within the app (commit / discard). Bump gitVersion
+  // so open diff overlays refetch their HEAD baseline; re-read the skill so the
+  // editor reflects reverted content, remounting it (docVersion) only when it's
+  // not mid-edit, so live keystrokes are never dropped.
+  const reload = useCallback(() => {
+    const cur = dataRef.current;
+    if (!cur) return;
+    setGitVersion((v) => v + 1);
+    (async () => {
+      try {
+        const sd = await loadSkill(cur.root);
+        if (dataRef.current?.root !== sd.root) return;
+        setData(sd);
+        dataRef.current = sd;
+        if (!isEditorDirty()) setDocVersion((v) => v + 1);
+      } catch {
+        /* a transient read failure just leaves the current data in place */
+      }
+    })();
+  }, []);
+
   if (error) return <SkillErrorShell root={root} message={error} />;
   if (!data) return <SkillLoadingShell />;
   return (
-    <StudioProvider value={{ data, docVersion, afterSave }}>
+    <StudioProvider value={{ data, docVersion, gitVersion, afterSave, reload }}>
       <StudioLayout />
     </StudioProvider>
   );

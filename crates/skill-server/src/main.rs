@@ -213,6 +213,13 @@ fn handle(method: &Method, url: &str, body: &str, dist: &Path) -> Reply {
         (Method::Post, "/api/git-status") => json_reply(gitops::git_status(&s("root"))),
         (Method::Post, "/api/git-worktree-diff") => json_reply(gitops::git_worktree_diff(&s("root"))),
         (Method::Post, "/api/git-commit-diff") => json_reply(gitops::git_commit_diff(&s("root"), &s("sha"))),
+        (Method::Post, "/api/git-file-at") => json_reply(gitops::git_file_at(&s("root"), &s("rev"), &s("path"))),
+        (Method::Post, "/api/git-discard") => {
+            json_reply(gitops::git_discard(&s("root"), &s("path")).map(|_| json!({ "ok": true })))
+        }
+        (Method::Post, "/api/git-discard-all") => {
+            json_reply(gitops::git_discard_all(&s("root")).map(|_| json!({ "ok": true })))
+        }
         (Method::Get, "/api/secrets-status") => json_reply(secrets::secrets_status()),
         (Method::Get, "/api/secrets-list") => json_reply(secrets::secrets_list()),
         (Method::Post, "/api/secret-set") => {

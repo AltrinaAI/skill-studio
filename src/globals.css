@@ -469,3 +469,97 @@ body {
 .diff-del .diff-marker {
   color: color-mix(in srgb, var(--error) 80%, var(--fg));
 }
+
+/* ---------------------------------------------------------------------- */
+/* In-editor diff overlay (@codemirror/merge unifiedMergeView)            */
+/* ---------------------------------------------------------------------- */
+/* Themed to the shared --ok/--error tokens so it tracks light/dark. New
+   (current-buffer) content reads green; removed (HEAD) content reads red. */
+.cm-editor .cm-changedLine,
+.cm-editor .cm-insertedLine {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.cm-editor .cm-changedText,
+.cm-editor .cm-insertedLine .cm-changedText {
+  background: color-mix(in srgb, var(--ok) 26%, transparent);
+  border-radius: 2px;
+}
+.cm-editor .cm-deletedChunk {
+  background: color-mix(in srgb, var(--error) 7%, transparent);
+}
+.cm-editor .cm-deletedLine,
+.cm-editor .cm-deletedText {
+  background: color-mix(in srgb, var(--error) 15%, transparent);
+  text-decoration: none;
+  color: var(--fg);
+}
+.cm-editor .cm-deletedText {
+  background: color-mix(in srgb, var(--error) 30%, transparent);
+  border-radius: 2px;
+}
+/* Deleted lines render at the normal body size so a deleted heading matches its
+   replacement (no oversized/undersized mismatch). */
+.cm-editor.cm-merge-b .cm-deletedChunk {
+  font-size: 1rem;
+}
+
+/* Revert buttons — an overlay in the LEFT margin (beyond the text column, so it
+   never shrinks it), one per changed chunk, portaled into the scroll content so
+   it scrolls with the text. Click reverts that chunk to the committed version. */
+.diff-revert-btn {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--border));
+  border-radius: 5px;
+  background: var(--surface);
+  color: color-mix(in srgb, var(--error) 75%, var(--fg));
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.1s ease, background 0.1s ease;
+}
+.diff-revert-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--error) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border));
+}
+
+/* Change overview ruler — a React overlay on the SCROLL PANE's right edge (atop
+   the native scrollbar, which still shows your position). The track is
+   click-through so the scrollbar stays draggable; marks (green = change,
+   red = deletion) jump to that change on click. Lives OUTSIDE the text column. */
+.diff-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 20;
+  pointer-events: none;
+}
+.diff-ruler-mark {
+  position: absolute;
+  right: 0;
+  width: 9px;
+  min-height: 3px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  cursor: pointer;
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--ok) 70%, transparent);
+  transition: background 0.1s ease;
+}
+.diff-ruler-mark.is-del {
+  background: color-mix(in srgb, var(--error) 70%, transparent);
+}
+.diff-ruler-mark:hover {
+  background: var(--accent);
+}

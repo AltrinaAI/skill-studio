@@ -1,10 +1,13 @@
 "use client";
 
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useManualSave } from "./useManualSave";
+import { useStudio } from "./StudioContext";
 import { agentColor, agentForPath, skillKind } from "@/lib/agents";
 import * as api from "@/lib/api";
 import {
+  parseSkillMd,
   serializeSkillMd,
   validateSkill,
   normalizeMetadata,
@@ -198,6 +201,33 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
   }, [data.root, frontmatter, body]);
   useManualSave(serialized, save, true, onSaved);
 
+  // --- Review mode: diff the BODY against its HEAD version. The on-disk file
+  // carries the frontmatter too, so we parse HEAD's SKILL.md and diff body-only
+  // (frontmatter edits live in the form above, not the prose overlay). The
+  // "Review changes" toggle lives in the nav bar; this reacts to ?diff=worktree. ---
+  const { gitVersion } = useStudio();
+  const [searchParams] = useSearchParams();
+  const reviewRequested = searchParams.get("diff") === "worktree";
+  const [headBody, setHeadBody] = useState<string | undefined>(undefined);
+  const reqRef = useRef(0);
+  useEffect(() => {
+    const myReq = ++reqRef.current; // bump first so exit invalidates an in-flight fetch
+    if (!reviewRequested) {
+      setHeadBody(undefined);
+      return;
+    }
+    api
+      .gitFileAt(data.root, "HEAD", "SKILL.md")
+      .then((raw) => {
+        if (myReq !== reqRef.current) return;
+        // Empty (never committed) → "" so the whole body reads as new.
+        setHeadBody(raw ? parseSkillMd(raw).body : "");
+      })
+      .catch(() => {
+        if (myReq === reqRef.current) setHeadBody(undefined);
+      });
+  }, [reviewRequested, data.root, gitVersion]);
+
   const dupKeys = useMemo(() => {
     const trimmed = meta.map((r) => r.key.trim());
     return new Set(trimmed.filter((k, i) => k && trimmed.indexOf(k) !== i));
@@ -206,6 +236,18 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
 
   return (
     <div className="mx-auto max-w-184 px-6 py-10 sm:px-10">
+      {reviewRequested && headBody !== undefined && (
+        <div className="mb-5 rounded-md border border-accent/30 bg-accent-soft px-3 py-2 text-xs text-muted">
+          {body === headBody ? (
+            <>Reviewing changes — the instructions are unchanged since the last commit (only the properties below differ).</>
+          ) : (
+            <>
+              Reviewing changes since the last commit. Hover a change for{" "}
+              <span className="font-medium text-fg">Revert</span>; <kbd className="font-sans">F7</kbd> jumps to the next.
+            </>
+          )}
+        </div>
+      )}
       <div className="mb-7 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
         <ValidationPill issues={issues} />
         <SkillMeta root={data.root} />
@@ -298,7 +340,13 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
       <hr className="my-7 border-border" />
 
       <Suspense fallback={<EditorFallback />}>
-        <LiveEditor kind="markdown" value={body} onChange={setBody} placeholder="Write the skill instructions in Markdown…" />
+        <LiveEditor
+          kind="markdown"
+          value={body}
+          onChange={setBody}
+          placeholder="Write the skill instructions in Markdown…"
+          diffOriginal={reviewRequested ? headBody : undefined}
+        />
       </Suspense>
     </div>
   );

@@ -10,13 +10,14 @@ import { useStudio } from "./StudioContext";
  *  `reqRef` guard drops a stale read that resolves after the user has navigated
  *  to a different file. */
 export function Component() {
-  const { data, afterSave } = useStudio();
+  const { data, docVersion, afterSave } = useStudio();
   const rel = useParams()["*"] ?? "";
   const [fileData, setFileData] = useState<FileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const reqRef = useRef(0);
 
+  // docVersion re-reads the file when a reload (e.g. a discard) rewrote it on disk.
   useEffect(() => {
     const myReq = ++reqRef.current;
     setLoading(true);
@@ -34,7 +35,7 @@ export function Component() {
         if (myReq === reqRef.current) setLoading(false);
       }
     })();
-  }, [data.root, rel]);
+  }, [data.root, rel, docVersion]);
 
   if (loading) {
     return (
@@ -45,5 +46,5 @@ export function Component() {
   }
   if (error) return <p className="px-8 py-8 text-sm text-danger">{error}</p>;
   if (!fileData) return null;
-  return <FilePane key={fileData.rel} root={data.root} file={fileData} onSaved={() => afterSave(rel)} />;
+  return <FilePane key={`${fileData.rel}:${docVersion}`} root={data.root} file={fileData} onSaved={() => afterSave(rel)} />;
 }
