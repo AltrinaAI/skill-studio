@@ -5,6 +5,7 @@ import { Spinner } from "@/components/ui";
 import FolderPicker from "@/components/FolderPicker";
 import * as api from "@/lib/api";
 import type { AgentOption } from "@/lib/api";
+import { loadTerminalPrefs, saveTerminalPrefs } from "@/lib/terminalPrefs";
 
 const btnPrimary =
   "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
@@ -88,6 +89,21 @@ export default function NewTerminalDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Restore the agent's last-used config when it's selected (incl. the initial
+  // default); falls back to an empty form for agents never launched before.
+  useEffect(() => {
+    if (!agentId) return;
+    const p = loadTerminalPrefs(agentId);
+    const wantAuto = p?.auto ?? false;
+    setCwd(p?.cwd ?? "");
+    setIde(p?.ide ?? false);
+    setAuto(wantAuto);
+    // auto and skip are mutually exclusive; auto wins, matching the checkbox
+    // handlers and the create() gating, in case stored prefs ever have both.
+    setSkip((p?.skip ?? false) && !wantAuto);
+    setExtra(p?.extra ?? "");
+  }, [agentId]);
+
   const selected = useMemo(() => agents?.find((a) => a.id === agentId), [agents, agentId]);
 
   const chooseCwd = async () => {
@@ -114,6 +130,7 @@ export default function NewTerminalDialog({
         autoMode: auto && selected.agent === "claude",
         extraArgs: tokenizeArgs(extra),
       });
+      saveTerminalPrefs(selected.id, { cwd: cwd.trim(), ide, skip, auto, extra });
       onCreated(s);
     } catch (e) {
       setBusy(false);

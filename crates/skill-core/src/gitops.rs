@@ -108,6 +108,20 @@ fn git_ok(root: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// The skill's path within its repo, with a trailing slash (e.g. "skills/foo/"),
+/// or "" when the skill *is* the repo's top level. git reports status/diff paths
+/// from the repo root, so inside a parent repo we strip this to recover
+/// skill-relative paths (what the rest of the studio works in).
+fn repo_prefix(root: &Path) -> String {
+    git_ok(root, &["rev-parse", "--show-prefix"]).unwrap_or_default()
+}
+
+/// Strip the repo prefix off a repo-root-relative path, yielding a skill-relative
+/// one. A no-op when `prefix` is empty (the skill is its own repo).
+fn strip_repo_prefix(path: &str, prefix: &str) -> String {
+    path.strip_prefix(prefix).unwrap_or(path).to_string()
+}
+
 pub fn git_available() -> bool {
     Command::new("git")
         .arg("--version")
@@ -137,10 +151,15 @@ pub fn git_info(root: &str) -> Result<GitInfo, String> {
     }
     if info.is_repo {
         info.branch = git_ok(&root_path, &["branch", "--show-current"]).filter(|s| !s.is_empty());
-        info.dirty = git_ok(&root_path, &["status", "--porcelain"])
+        info.has_remote = git_ok(&root_path, &["remote"]).map(|s| !s.is_empty()).unwrap_or(false);
+    }
+    // `dirty` + identity are meaningful for your own repo AND for a skill living
+    // inside a parent repo — scope the status to this folder (`-- .`) so changes
+    // elsewhere in a parent repo don't count this skill as dirty.
+    if info.is_repo || info.in_parent_repo {
+        info.dirty = git_ok(&root_path, &["status", "--porcelain", "--", "."])
             .map(|s| !s.is_empty())
             .unwrap_or(false);
-        info.has_remote = git_ok(&root_path, &["remote"]).map(|s| !s.is_empty()).unwrap_or(false);
         info.has_identity = git_ok(&root_path, &["config", "user.email"])
             .map(|s| !s.is_empty())
             .unwrap_or(false);
@@ -274,10 +293,15 @@ fn classify(code: &str) -> (&'static str, bool, bool) {
 /// stream is NUL-separated; a rename/copy entry is followed by its old path in
 /// the next field, so we walk the tokens with a cursor rather than line-split.
 fn parse_status(root: &Path) -> Vec<FileChange> {
-    let out = match git(root, &["status", "--porcelain=v1", "-z", "-uall"]) {
+    // `-- .` scopes the status to this folder so, when the skill lives inside a
+    // larger parent repo, that repo's changes elsewhere don't show up here.
+    let out = match git(root, &["status", "--porcelain=v1", "-z", "-uall", "--", "."]) {
         Ok(o) if o.status.success() => o.stdout,
         _ => return vec![],
     };
+    // Paths come back relative to the repo root; inside a parent repo that carries
+    // the skill's own sub-path prefix, which we strip to keep them skill-relative.
+    let prefix = repo_prefix(root);
     let text = String::from_utf8_lossy(&out);
     let tokens: Vec<&str> = text.split('\0').filter(|t| !t.is_empty()).collect();
     let mut files = Vec::new();
@@ -289,11 +313,11 @@ fn parse_status(root: &Path) -> Vec<FileChange> {
             continue;
         }
         let code = &entry[..2];
-        let path = entry[3..].to_string(); // skip the single space after XY
+        let path = strip_repo_prefix(&entry[3..], &prefix); // skip the single space after XY
         let (kind, staged, unstaged) = classify(code);
         let orig_path = if kind == "renamed" || kind == "copied" {
             // The old path is the following NUL-separated token.
-            let p = tokens.get(i).map(|s| s.to_string());
+            let p = tokens.get(i).map(|s| strip_repo_prefix(s, &prefix));
             i += 1;
             p
         } else {
@@ -344,7 +368,10 @@ pub fn git_worktree_diff(root: &str) -> Result<WorktreeDiff, String> {
     if git_ok(&root_path, &["rev-parse", "--verify", "HEAD"]).is_some() {
         // -M detects renames so a moved file reads as a rename (matching the
         // per-commit diff from `git show`) rather than a delete + add pair.
-        if let Ok(out) = git(&root_path, &["-c", "core.quotepath=false", "diff", "--no-color", "-M", "HEAD"]) {
+        // --relative confines the diff to this folder and rewrites its a/b paths
+        // to be skill-relative — so a skill nested in a parent repo diffs cleanly
+        // (a no-op when the skill is its own repo and already at the root).
+        if let Ok(out) = git(&root_path, &["-c", "core.quotepath=false", "diff", "--no-color", "-M", "--relative", "HEAD"]) {
             if out.status.success() {
                 truncated |= push_capped(&mut diff, &String::from_utf8_lossy(&out.stdout), MAX_DIFF_BYTES);
             }
@@ -623,6 +650,70 @@ mod tests {
         git_discard(&root, "NOTES.md").unwrap();
         assert!(!base.join("NOTES.md").exists());
         assert!(git_discard(&root, "../escape").is_err()); // traversal rejected
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn parent_repo_paths_are_skill_relative() {
+        if !git_available() {
+            return; // skip on machines without git
+        }
+        // A parent repo that holds the skill in a nested sub-path, plus a file
+        // OUTSIDE the skill — the studio must never surface that one.
+        let base = std::env::temp_dir().join(format!("ass_parent_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let skill = base.join("skills/my-skill");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: t\n---\nhi").unwrap();
+        std::fs::write(base.join("README.md"), "outer\n").unwrap();
+        let parent = base.to_string_lossy().to_string();
+        let skill_root = skill.to_string_lossy().to_string();
+
+        git_init(&parent).unwrap();
+        let _ = git(&base, &["config", "user.email", "test@example.com"]);
+        let _ = git(&base, &["config", "user.name", "Test"]);
+        let _ = git(&base, &["add", "-A"]);
+        let _ = git(&base, &["commit", "-m", "init"]);
+
+        // info: the skill is seen as living inside a parent repo, not its own.
+        let info = git_info(&skill_root).unwrap();
+        assert!(info.in_parent_repo && !info.is_repo);
+        assert!(!info.dirty); // clean so far
+
+        // Edit inside the skill, add an untracked file inside it, and touch a file
+        // OUTSIDE the skill in the same parent repo.
+        std::fs::write(skill.join("SKILL.md"), "---\nname: t\n---\nhi there").unwrap();
+        std::fs::write(skill.join("NOTES.md"), "fresh\n").unwrap();
+        std::fs::write(base.join("README.md"), "outer changed\n").unwrap();
+
+        // status is scoped to the skill AND paths are skill-relative (no
+        // "skills/my-skill/" prefix), and the outside README never appears.
+        let changes = git_status(&skill_root).unwrap();
+        let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+        assert!(paths.contains(&"SKILL.md"), "got {paths:?}");
+        assert!(paths.contains(&"NOTES.md"), "got {paths:?}");
+        assert!(!paths.iter().any(|p| p.contains("README") || p.contains("skills/")), "leaked: {paths:?}");
+
+        assert!(git_info(&skill_root).unwrap().dirty); // now dirty (scoped)
+
+        // worktree diff is likewise scoped + skill-relative.
+        let wt = git_worktree_diff(&skill_root).unwrap();
+        assert!(wt.diff.contains("a/SKILL.md") && wt.diff.contains("+hi there"));
+        assert!(wt.diff.contains("NOTES.md") && wt.diff.contains("+fresh"));
+        assert!(!wt.diff.contains("README"), "leaked outside change: {}", wt.diff);
+        assert!(!wt.diff.contains("skills/my-skill"), "unstripped prefix: {}", wt.diff);
+
+        // file-at-rev resolves against the skill dir (skill-relative path).
+        let head = git_file_at(&skill_root, "HEAD", "SKILL.md").unwrap();
+        assert!(head.contains("name: t") && !head.contains("hi there"));
+
+        // discard one skill file → restored from the parent's HEAD, untouched
+        // outside the skill.
+        git_discard(&skill_root, "SKILL.md").unwrap();
+        let restored = std::fs::read_to_string(skill.join("SKILL.md")).unwrap();
+        assert!(restored.contains("name: t") && !restored.contains("hi there"));
+        assert_eq!(std::fs::read_to_string(base.join("README.md")).unwrap(), "outer changed\n");
 
         let _ = std::fs::remove_dir_all(&base);
     }

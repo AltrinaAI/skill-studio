@@ -253,7 +253,10 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
       .gitInfo(data.root)
       .then((info) => {
         if (myReq !== reqRef.current) return undefined;
-        if (!info.isRepo) {
+        // HEAD SKILL.md baseline: your own repo (any kind), or a PERSONAL skill in
+        // a parent repo — matching the Source Control panel's personal-only gate.
+        const personal = skillKind(data.root).kind === "personal";
+        if (!info.isRepo && !(info.inParentRepo && personal)) {
           clear();
           return undefined;
         }

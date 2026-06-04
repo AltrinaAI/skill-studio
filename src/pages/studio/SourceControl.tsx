@@ -66,10 +66,13 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
       const i = await api.gitInfo(root);
       if (myReq !== refreshReq.current) return;
       setInfo(i);
-      if (i.isRepo) {
+      // Working-tree changes are scoped to this folder for your own repo AND for a
+      // skill nested in a parent repo. Commit history (the log) is only the
+      // parent's to show, so we skip it there.
+      if (i.isRepo || i.inParentRepo) {
         const [c, l] = await Promise.all([
           api.gitStatus(root).catch(() => [] as GitFileChange[]),
-          api.gitLog(root, 100).catch(() => [] as GitCommit[]),
+          i.isRepo ? api.gitLog(root, 100).catch(() => [] as GitCommit[]) : Promise.resolve([] as GitCommit[]),
         ]);
         if (myReq !== refreshReq.current) return;
         setChanges(c);
@@ -159,7 +162,7 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
 
   const discardAll = async () => {
     if (busy) return;
-    if (!window.confirm("Discard ALL changes back to your last saved version? This can’t be undone.")) return;
+    if (!window.confirm("Discard ALL changes since the last commit? This can’t be undone.")) return;
     setBusy(true);
     setActionErr(null);
     try {
@@ -224,15 +227,7 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
         <span className="font-medium text-fg">Manage → Sync</span> to make an editable copy you can version.
       </Notice>
     );
-  if (info.inParentRepo)
-    return (
-      <Notice>
-        Tracked by a parent repository
-        {info.toplevel ? <> (<span className="font-mono text-faint">{info.toplevel}</span>)</> : null}. Manage its
-        history there.
-      </Notice>
-    );
-  if (!info.isRepo)
+  if (!info.isRepo && !info.inParentRepo)
     return (
       <div className="px-3 py-4">
         <p className="mb-3 text-xs text-muted">Not version-tracked yet. Start a history for this skill.</p>
@@ -252,7 +247,8 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
     <div className="flex min-h-0 flex-1 flex-col overflow-auto">
       {actionErr && <p className="px-3 pt-2 text-[0.7rem] text-danger">{actionErr}</p>}
 
-      {/* Working-tree changes — hidden entirely when the tree is clean. */}
+      {/* Working-tree changes — scoped to this folder for your own repo AND for a
+          skill nested in a parent repo. Hidden entirely when the tree is clean. */}
       {changes.length > 0 && (
         <>
           <div className="flex items-center gap-2 px-3 pb-1 pt-3">
@@ -300,7 +296,10 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
         </>
       )}
 
-      {/* Saved versions (commit history) + the Save action. */}
+      {/* Saved versions (commit history) + the Save action — your own repo only.
+          A skill nested in a parent repo is versioned there, so we point to it. */}
+      {info.isRepo ? (
+        <>
       <div className="flex items-center gap-2 px-3 pb-1 pt-4">
         <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted">Versions</span>
         {info.dirty && (
@@ -350,6 +349,15 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
             );
           })}
         </ul>
+      )}
+        </>
+      ) : (
+        <Notice>
+          {changes.length === 0 ? "No changes since the parent repository’s last commit. " : null}
+          Tracked by a parent repository
+          {info.toplevel ? <> (<span className="font-mono text-faint">{info.toplevel}</span>)</> : null}. Save
+          versions there.
+        </Notice>
       )}
 
       {saveOpen && (

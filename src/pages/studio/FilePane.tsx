@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { useAutosave } from "./useAutosave";
 import { useStudio } from "./StudioContext";
 import DiffView from "./DiffView";
+import { skillKind } from "@/lib/agents";
 import { humanSize } from "@/lib/fileTypes";
 import * as api from "@/lib/api";
 import type { FileData } from "@/lib/types";
@@ -75,7 +76,10 @@ export default function FilePane({ root, file, onSaved }: { root: string; file: 
       .gitInfo(root)
       .then((info) => {
         if (myReq !== reqRef.current) return;
-        if (!info.isRepo) {
+        // HEAD baseline: your own repo (any kind), or a PERSONAL skill nested in a
+        // parent repo — matching the Source Control panel's personal-only gate.
+        const personal = skillKind(root).kind === "personal";
+        if (!info.isRepo && !(info.inParentRepo && personal)) {
           setBaseline(undefined);
           return undefined;
         }

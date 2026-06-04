@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { skillKind } from "@/lib/agents";
 import { useEditorStatus } from "@/lib/editorState";
 import { useStudio } from "./StudioContext";
 import * as api from "@/lib/api";
@@ -30,7 +31,11 @@ export function useReviewAvailable(root: string, rel: string): boolean {
       try {
         const info = await api.gitInfo(root);
         if (cancelled) return;
-        if (!info.isRepo) {
+        // Reviewable when HEAD is a valid baseline: your own repo (any kind, as
+        // before), or — matching the Source Control panel's personal-only gate — a
+        // PERSONAL skill nested in a parent repo.
+        const personal = skillKind(root).kind === "personal";
+        if (!info.isRepo && !(info.inParentRepo && personal)) {
           setState({ isRepo: false, changed: false });
           return;
         }
