@@ -1,53 +1,78 @@
-# Agent Skill Viewer & Editor
+# Agent Skill Studio
 
-A local Next.js app that renders a single **[Agent Skill](https://agentskills.io/specification)**
-folder in a human-readable way — with metadata badges, spec validation, syntax
-highlighting, a file browser, and in-place editing.
+A desktop app for **viewing, editing, versioning, and running
+[Agent Skills](https://agentskills.io/home)** — the portable folders of human
+expert knowledge that agents load on demand.
 
-## What it understands
+Managing skills is like managing a team's culture and policies: written once,
+leveraged by every agent. Studio gives that knowledge a human interface so you
+can see, diff, version, and share your skills instead of letting them drift
+across a dozen agent config dirs.
 
-A skill is a directory containing a required `SKILL.md` (YAML frontmatter +
-Markdown body) plus optional `scripts/`, `references/`, `assets/` and any other
-files. This tool:
+Built with [Tauri](https://tauri.app/) (Rust backend + React/TS frontend). The
+backend is separable from the UI, so it runs natively *or* headless on a remote
+box you drive from a browser (the VS Code-remote model — see [`design.md`](./design.md)).
 
-- **Renders `SKILL.md`** — `name`, `description`, `license`, `compatibility`,
-  `allowed-tools` (as chips), and `metadata`, followed by the Markdown body with
-  GitHub-flavored Markdown and code highlighting.
-- **Validates against the spec** — name pattern & folder-name match, description
-  length, the 500-char `compatibility` limit, metadata shape, body size
-  advisories (≤ 500 lines / ≈ 5000 tokens), and broken/too-deep file references.
-- **Browses files** — a tree of the whole skill folder; click any file to view it
-  with syntax highlighting (or render it, for Markdown; or preview, for images).
-- **Edits** — a form for the frontmatter fields plus a CodeMirror editor with live
-  preview for the body, and a plain editor for any other text file. Changes are
-  written back to disk.
+## Features
+
+- **Discover** every skill on your machine — across Claude Code, Codex, Cursor,
+  Gemini CLI, OpenClaw, the shared `~/.agents/skills` standard, and project repos
+  — classified personal / official / plugin.
+- **Read & validate** `SKILL.md` against the spec (frontmatter badges, GFM body,
+  name/description/compatibility/metadata checks, file-reference checks) with a
+  full file-tree browser.
+- **Edit in place** — frontmatter form + CodeMirror body editor with live
+  preview; double-click to toggle render/edit; autosave, scoped to the folder.
+- **Version like code** — a VS Code-style Source Control panel per skill: start
+  tracking, working-tree changes, inline diffs, discard, numbered commit history,
+  parent-repo aware.
+- **Draft commit messages on-device** — a managed `llama-server` (llama.cpp)
+  running Qwen3-0.6B; nothing leaves the machine.
+- **Create / import / export / sync / delete** — scaffold a new skill, import a
+  folder or `.zip`, export a `.zip` (optionally bundling secrets), or share into a
+  shared dir by copy or symlink.
+- **Secrets manager** — one machine-local store, loaded into agent environments
+  by the bundled `skill-studio` activation skill.
+- **App-managed terminals** — run Claude Code, Codex, or a shell in tmux-backed
+  sessions that survive UI disconnect, so you can close the lid and let the agent
+  keep going.
 
 ## Run it
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000
+npm run dev          # native desktop
 ```
 
-Then paste an absolute path to a skill folder into the top bar and press
-**Load**, or open one of the bundled examples in `examples/`.
+| Mode | Command | Open |
+|------|---------|------|
+| Native desktop | `npm run dev` | the app window |
+| Browser, local backend | `cargo run -p skill-server` + `npm run dev:vite` | `localhost:1420` |
+| Browser, remote backend | `skill-server` on the host; `VITE_API_TARGET=http://<host>:8765 npm run dev:vite` | `localhost:1420` |
+| Production | `npm run build`, then run `skill-server` | skill-server's port |
 
-To open a folder automatically on startup:
+Open a skill via the discovered list, the top-bar path input, **Browse…**, or a
+`?path=/abs/path/to/skill` deep link. The on-device LLM bundles a prebuilt
+`llama-server` (`scripts/fetch-engine.sh`); the model downloads on first use.
+`examples/` holds real document skills (`docx`, `pdf`, `pptx`, `xlsx`).
 
-```bash
-SKILL_PATH=/absolute/path/to/my-skill npm run dev
-# or visit  http://localhost:3000/?path=/absolute/path/to/my-skill
-```
+## Roadmap
 
-## Examples
+The thesis: the future is humans and AI agents **collaborating**, not humans
+replaced — and skills are the medium for human expert knowledge, so they need a
+first-class human UX. Next:
 
-`examples/` contains real document skills (`docx`, `pdf`, `pptx`, `xlsx`) used by
-the welcome screen — each ships a `SKILL.md`, a `scripts/` directory, a bundled
-license, and (for `pdf`/`pptx`) additional reference docs.
+1. **Skill Mining** — a local agent that mines past conversations to propose the
+   skills that would have helped, and flags stale ones (the Proposed-skills /
+   `generated-skills/` staging is already in place for it).
+2. **Full SSH support** from your local config — drive agents on a remote box via
+   the Terminal and close your laptop.
+3. **Version-controlled team collaboration & team secret managers.**
+4. **Multi-modal skills / SOP documents** in a readable format.
 
 ## Notes
 
-- File reads and writes are constrained to the loaded skill directory (no `..`
-  escapes). It's a local developer tool — run it on folders you trust.
-- Markdown is rendered without raw-HTML passthrough, so embedded `<script>` etc.
-  are not executed.
+- Reads/writes are constrained to the loaded skill folder (no `..` escapes); run
+  it on folders you trust. Markdown renders without raw-HTML passthrough.
+- The desktop CSP is `default-src 'self'`; any outbound network originates in
+  Rust, never the webview — so a skill's diff is never sent anywhere.
