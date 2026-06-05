@@ -19,7 +19,7 @@
 //!           `@ass_owner_pid` is no longer a live process;
 //!       (c) `cleanup_owned()` kills this process's sessions on graceful exit.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -103,6 +103,45 @@ fn which(bin: &str) -> Option<String> {
         .map(|d| d.join(bin))
         .find(|p| p.is_file())
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Expand a leading `~`/`~/` to the user's home directory; pass other paths through
+/// unchanged. `None` only when `~` is used but no home dir is resolvable.
+fn expand_tilde(path: &str) -> Option<PathBuf> {
+    match path.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir().map(|h| h.join(rest)),
+        None if path == "~" => dirs::home_dir(),
+        None => Some(PathBuf::from(path)),
+    }
+}
+
+/// Resolve an agent's CLI binary: the shell PATH first, then the agent-specific
+/// off-PATH install locations from its `Spec` — the fixed `cli_paths` (leading `~`
+/// expanded) and `<install_dir_env>/<path_name>`. Returns the first existing file,
+/// so a native/standalone install that isn't on PATH (e.g. claude's
+/// `~/.claude/local/claude`) is still detected.
+fn resolve_cli(spec: &Spec) -> Option<String> {
+    if let Some(bin) = which(spec.path_name) {
+        return Some(bin);
+    }
+    for cand in spec.cli_paths {
+        if let Some(path) = expand_tilde(cand) {
+            if path.is_file() {
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    if !spec.install_dir_env.is_empty() {
+        if let Some(dir) = std::env::var_os(spec.install_dir_env) {
+            if !dir.is_empty() {
+                let path = PathBuf::from(dir).join(spec.path_name);
+                if path.is_file() {
+                    return Some(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn tmux_bin() -> String {
@@ -743,7 +782,7 @@ fn compute_agents() -> Vec<AgentOption> {
     });
 
     for spec in agent_specs() {
-        if let Some(bin) = which(spec.path_name) {
+        if let Some(bin) = resolve_cli(&spec) {
             out.push(AgentOption {
                 id: format!("{}:cli", spec.agent),
                 agent: spec.agent.into(),
