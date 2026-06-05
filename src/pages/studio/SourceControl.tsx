@@ -33,12 +33,12 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
   const navigate = useNavigate();
   const location = useLocation();
   const [, setSearchParams] = useSearchParams();
-  const { reload, gitVersion, bumpGit } = useStudio();
+  const { reload, gitVersion, bumpGit, preview, enterVersion, keepVersion } = useStudio();
   const kind = skillKind(root).kind;
 
-  // What's currently being viewed, so its row stays highlighted: a commit (the
-  // commit/:sha route) or the open file (file route, or the index = SKILL.md).
-  const selectedSha = useMatch("/studio/:root/commit/:sha")?.params.sha ?? null;
+  // The version being previewed stays highlighted in the list. The open file
+  // (file route, or the index = SKILL.md) drives the New Changes highlight.
+  const selectedSha = preview?.sha ?? null;
   const fileMatch = useMatch("/studio/:root/file/*");
   const indexMatch = useMatch("/studio/:root");
   const selectedRel = fileMatch?.params["*"] ?? (indexMatch ? "SKILL.md" : null);
@@ -181,9 +181,16 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
       setCommitting(true);
       setCommitErr(null);
       try {
-        await api.gitCommit(root, message);
+        if (preview) {
+          // Editing a previewed version → land it as a NEW version on the branch
+          // tip (linear history) and return to current. keepVersion reloads +
+          // bumps diff baselines for us.
+          await keepVersion(message);
+        } else {
+          await api.gitCommit(root, message);
+          bumpGit(); // refresh open diff baselines so live change indicators clear
+        }
         await refresh();
-        bumpGit(); // refresh open diff baselines so live change indicators clear
         return true;
       } catch (e) {
         setCommitErr(e instanceof Error ? e.message : "Couldn’t save this version");
@@ -192,7 +199,7 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
         setCommitting(false);
       }
     },
-    [root, refresh, bumpGit],
+    [root, refresh, bumpGit, preview, keepVersion],
   );
 
   // There's a version to save when this is your own tracked repo with uncommitted
@@ -293,29 +300,42 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
             );
           })}
           </ul>
+
+          {/* Save a version — the deliberate checkpoint that commits these changes.
+              Lives WITH the changes it captures (your own repo only; a skill nested
+              in a parent repo is versioned there). ⌘S opens the same dialog. */}
+          {info.isRepo && (
+            <div className="px-3 pb-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setSaveOpen(true)}
+                disabled={busy}
+                title={
+                  !info.hasIdentity
+                    ? "Set a git identity first"
+                    : preview
+                      ? "Save these edits as a new version (⌘S)"
+                      : "Save a version (⌘S)"
+                }
+                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                </svg>
+                {preview ? "Save as new version" : "Save version"}
+              </button>
+            </div>
+          )}
         </>
       )}
 
-      {/* Saved versions (commit history) + the Save action — your own repo only.
-          A skill nested in a parent repo is versioned there, so we point to it. */}
+      {/* Saved versions (commit history) — your own repo only. A skill nested in a
+          parent repo is versioned there, so we point to it instead. */}
       {info.isRepo ? (
         <>
       <div className="flex items-center gap-2 px-3 pb-1 pt-4">
         <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted">Versions</span>
-        {info.dirty && (
-          <button
-            type="button"
-            onClick={() => setSaveOpen(true)}
-            disabled={busy}
-            title={info.hasIdentity ? "Save a version (⌘S)" : "Set a git identity first"}
-            className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 text-[0.7rem] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-            </svg>
-            Save
-          </button>
-        )}
+        {log.length > 0 && <span className="text-[0.68rem] text-faint">{log.length}</span>}
       </div>
       {log.length === 0 ? (
         <p className="px-3 pb-3 text-xs text-faint">No versions yet.</p>
@@ -327,7 +347,12 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
             <li key={c.sha}>
               <button
                 type="button"
-                onClick={() => navigate(studioCommitPath(root, c.sha))}
+                onClick={() => {
+                  setActionErr(null);
+                  enterVersion(c.sha, c.number).catch((e) =>
+                    setActionErr(e instanceof Error ? e.message : "Couldn’t open that version"),
+                  );
+                }}
                 className={`flex w-full flex-col gap-0.5 border-l-2 px-3 py-1.5 text-left ${
                   active ? "border-accent bg-accent-soft" : "border-transparent hover:border-accent hover:bg-surface"
                 }`}

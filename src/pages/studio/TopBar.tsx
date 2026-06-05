@@ -86,7 +86,7 @@ export default function TopBar({
       <button
         type="button"
         onClick={onManage}
-        title="Version, sync & collaborate"
+        title="Secrets, sync & collaborate"
         className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-panel hover:text-fg"
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

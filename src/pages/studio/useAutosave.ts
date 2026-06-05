@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { clearEditorStatus, publishEditorStatus } from "@/lib/editorState";
+import { clearEditorStatus, isAutosaveHeld, publishEditorStatus } from "@/lib/editorState";
 
 export type SaveStatus = "saved" | "dirty" | "saving" | "error";
 
@@ -57,7 +57,7 @@ export function useAutosave(
   });
 
   const runSave = useCallback(() => {
-    if (!enabledRef.current || inFlightRef.current) return; // a write is in flight → it re-runs on completion
+    if (!enabledRef.current || isAutosaveHeld() || inFlightRef.current) return; // a write is in flight → it re-runs on completion
     const v = valueRef.current;
     if (v === savedRef.current) return; // nothing to save
     setSaving(true);
@@ -80,6 +80,36 @@ export function useAutosave(
         if (inFlightRef.current === p) inFlightRef.current = null;
       });
     inFlightRef.current = p;
+  }, []);
+
+  // Awaitable flush: persist the latest buffer and resolve once it's on disk.
+  // Chained after any in-flight write so the newest content lands last. Used
+  // before a deliberate working-tree swap (version preview) so pending edits are
+  // saved — and thus stashed — rather than dropped when the editor remounts.
+  const flush = useCallback(async () => {
+    if (!enabledRef.current || isAutosaveHeld()) return;
+    if (valueRef.current === savedRef.current) {
+      await inFlightRef.current?.catch(() => {});
+      return;
+    }
+    const v = valueRef.current;
+    const prev = inFlightRef.current ?? Promise.resolve();
+    setSaving(true);
+    const p = prev
+      .then(() => saveImplRef.current(v))
+      .then(() => {
+        setSavedValue(v);
+        savedRef.current = v;
+        setError(null);
+        onSavedRef.current?.();
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Save failed"))
+      .finally(() => {
+        setSaving(false);
+        if (inFlightRef.current === p) inFlightRef.current = null;
+      });
+    inFlightRef.current = p;
+    await p;
   }, []);
 
   // A pending error is moot once the buffer matches disk again (e.g. the user
@@ -117,16 +147,18 @@ export function useAutosave(
   // Publish state to the shared store (drives the failure indicator + lets other
   // panels refresh when a write lands; `runSave` is the manual-retry handle).
   useEffect(() => {
-    if (enabled) publishEditorStatus({ present: true, dirty, saving, error }, runSave);
+    if (enabled) publishEditorStatus({ present: true, dirty, saving, error }, runSave, flush);
     else clearEditorStatus();
-  }, [enabled, dirty, saving, error, runSave]);
+  }, [enabled, dirty, saving, error, runSave, flush]);
 
   // Flush the final buffer on unmount (e.g. navigating to another file). Chained
   // after any in-flight write so the latest content lands LAST and can't be
   // clobbered by an older write completing after it.
   useEffect(
     () => () => {
-      if (enabledRef.current && valueRef.current !== savedRef.current) {
+      // Skip while autosave is held: the working tree is being swapped under us
+      // (version preview), so flushing this now-stale buffer would clobber it.
+      if (enabledRef.current && !isAutosaveHeld() && valueRef.current !== savedRef.current) {
         const v = valueRef.current;
         const prev = inFlightRef.current ?? Promise.resolve();
         prev
@@ -143,7 +175,7 @@ export function useAutosave(
   // actually failing (otherwise stay silent — autosave has it covered).
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (enabledRef.current && valueRef.current !== savedRef.current) {
+      if (enabledRef.current && !isAutosaveHeld() && valueRef.current !== savedRef.current) {
         void Promise.resolve(saveImplRef.current(valueRef.current)).catch(() => {});
       }
       if (error) {

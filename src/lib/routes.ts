@@ -7,6 +7,9 @@
 // slashes, so it rides as a `file/*` splat with each segment encoded; the router
 // decodes the splat on read.
 
+/** The dedicated secret-manager page (machine-local store + future providers). */
+export const secretsPath = () => "/secrets";
+
 export const studioPath = (root: string) => `/studio/${encodeURIComponent(root)}`;
 
 export const studioFilePath = (root: string, rel: string) =>

@@ -7,6 +7,7 @@ import { toggleTheme } from "@/lib/theme";
 import { armDiscardBypass } from "@/lib/editorState";
 import TopBar from "./TopBar";
 import Sidebar from "./Sidebar";
+import PreviewBanner from "./PreviewBanner";
 import DiffOverlays from "./DiffOverlays";
 import ManagePanel from "./ManagePanel";
 import ExportDialog from "./ExportDialog";
@@ -85,6 +86,7 @@ export default function StudioLayout() {
         onExport={onExport}
         toggleTheme={toggleTheme}
       />
+      <PreviewBanner />
       <div className="flex min-h-0 flex-1">
         <Sidebar data={data} selected={selected} onSelect={onSelect} />
         {/* The scroll pane (main) + diff overlays (overview ruler on the right,

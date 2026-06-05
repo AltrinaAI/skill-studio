@@ -55,6 +55,16 @@ export function SectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
+/** Small accent pill flagging a feature that's previewed but not yet functional
+ *  (e.g. the studio Collaborate section, or a not-yet-connectable secret provider). */
+export function PreviewBadge({ children = "Preview" }: { children?: ReactNode }) {
+  return (
+    <span className="rounded-full border border-accent/30 bg-accent-soft px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-accent">
+      {children}
+    </span>
+  );
+}
+
 export function ThemeToggle({ onClick }: { onClick: () => void }) {
   return (
     <button

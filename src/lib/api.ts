@@ -459,6 +459,33 @@ export const gitDiscardAll = (root: string) =>
     ? invoke<void>("git_discard_all", { root })
     : http<{ ok: boolean }>("POST", "git-discard-all", { root }).then(() => {});
 
+// --- version preview (view/edit a past version through the full editor) ---
+/** Returned when entering version preview. */
+export interface PreviewState {
+  /** Uncommitted work was set aside (stashed) to show this version cleanly. */
+  stashed: boolean;
+  /** The branch we'll return to on exit. */
+  branch?: string;
+}
+/** Enter "version preview": stash any uncommitted work and check `sha` into the
+ *  working tree (detached) so the full editor renders that version as if current.
+ *  Editing then autosaves onto it; saving makes a new linear version. Own-repo
+ *  personal skills only. */
+export const gitEnterVersion = (root: string, sha: string) =>
+  isTauri
+    ? invoke<PreviewState>("git_enter_version", { root, sha })
+    : http<PreviewState>("POST", "git-enter-version", { root, sha });
+/** Leave version preview: reattach to the branch and restore the set-aside work
+ *  (discarding any unsaved preview edits). Returns fresh GitInfo. */
+export const gitExitVersion = (root: string) =>
+  isTauri ? invoke<GitInfo>("git_exit_version", { root }) : http<GitInfo>("POST", "git-exit-version", { root });
+/** Save the previewed/edited version as a NEW version on the branch tip (linear
+ *  history); the set-aside work is discarded. */
+export const gitKeepVersion = (root: string, message: string) =>
+  isTauri
+    ? invoke<{ sha: string; summary: string }>("git_keep_version", { root, message })
+    : http<{ sha: string; summary: string }>("POST", "git-keep-version", { root, message });
+
 // --- secret manager (machine-local env vars for skills) ---
 export interface SecretEntry {
   key: string;

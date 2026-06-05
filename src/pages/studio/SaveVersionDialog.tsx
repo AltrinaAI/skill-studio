@@ -117,7 +117,12 @@ export default function SaveVersionDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={() => {
+        if (!saving) onClose(); // don't dismiss mid-save (re-exposes the version list)
+      }}
+    >
       <div
         className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
@@ -125,7 +130,7 @@ export default function SaveVersionDialog({
         <div className="flex items-center gap-2 border-b border-border px-5 py-3">
           <span className="text-sm font-semibold text-fg">Save a new version</span>
           <span className="truncate font-mono text-xs text-faint">{dirName}</span>
-          <button type="button" onClick={onClose} aria-label="Close" className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg">
+          <button type="button" onClick={onClose} disabled={saving} aria-label="Close" className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg disabled:opacity-40">
             ✕
           </button>
         </div>

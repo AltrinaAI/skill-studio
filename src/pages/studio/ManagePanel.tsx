@@ -1,15 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Spinner } from "@/components/ui";
-import SecretsManager from "@/components/SecretsManager";
+import { useNavigate } from "react-router-dom";
+import { PreviewBadge, Spinner } from "@/components/ui";
 import { agentColor, KIND_TAG, type SkillKind } from "@/lib/agents";
 import * as api from "@/lib/api";
-import type { GitInfo, GitCommit, SyncTarget } from "@/lib/api";
-import { useStudio } from "./StudioContext";
+import type { SyncTarget } from "@/lib/api";
+import { secretsPath } from "@/lib/routes";
 
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
 const btnGhost =
   "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
@@ -22,224 +20,6 @@ function Section({ title, badge, children }: { title: string; badge?: React.Reac
       </div>
       {children}
     </section>
-  );
-}
-
-function PreviewBadge() {
-  return (
-    <span className="rounded-full border border-accent/30 bg-accent-soft px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-accent">
-      Preview
-    </span>
-  );
-}
-
-// ---- Version (git) ----------------------------------------------------------
-function VersionSection({ root, dirName, kind }: { root: string; dirName: string; kind: SkillKind }) {
-  const { gitVersion, bumpGit } = useStudio();
-  const [info, setInfo] = useState<GitInfo | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [log, setLog] = useState<GitCommit[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [commitOpen, setCommitOpen] = useState(false);
-  const [message, setMessage] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const [modelStatus, setModelStatus] = useState<api.CommitModelStatus | null>(null);
-
-  const refresh = useCallback(async () => {
-    setErr(null);
-    try {
-      const i = await api.gitInfo(root);
-      setInfo(i);
-      setLog(i.isRepo ? await api.gitLog(root, 20).catch(() => []) : []);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed to load version info");
-    } finally {
-      setLoaded(true);
-    }
-  }, [root]);
-  // Reload on open and whenever git changed elsewhere (e.g. the top-bar Save).
-  useEffect(() => {
-    void refresh();
-  }, [refresh, gitVersion]);
-
-  const startTracking = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.gitInit(root);
-      await refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed to start tracking");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const openCommit = () => {
-    setMessage(log.length === 0 ? "Initial version" : `Update ${dirName}`);
-    setErr(null);
-    setCommitOpen(true);
-    // So we can warn about the one-time model download before the user clicks Generate.
-    api.commitModelStatus().then(setModelStatus).catch(() => setModelStatus(null));
-  };
-  const generate = async () => {
-    if (generating || busy) return;
-    setGenerating(true);
-    setErr(null);
-    try {
-      const msg = await api.generateCommitMessage(root);
-      setMessage(msg);
-      // The model is now present; clear any "will download" hint.
-      setModelStatus((s) => (s ? { ...s, downloaded: true } : s));
-    } catch (e) {
-      // Tauri rejects with a plain string (the Rust Err), not an Error — surface it.
-      setErr(e instanceof Error ? e.message : typeof e === "string" ? e : "Couldn’t generate a message");
-    } finally {
-      setGenerating(false);
-    }
-  };
-  const doCommit = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.gitCommit(root, message);
-      setCommitOpen(false);
-      await refresh();
-      bumpGit(); // refresh open diff baselines so live change indicators clear
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Couldn’t save this version");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!loaded) {
-    return (
-      <p className="flex items-center gap-2 text-sm text-muted">
-        <Spinner className="h-3.5 w-3.5" /> Checking version control…
-      </p>
-    );
-  }
-  if (!info) {
-    return <p className="text-sm text-danger">{err ?? "Couldn’t load version control."}</p>;
-  }
-  if (!info.available) {
-    return <p className="text-sm text-muted">Git isn’t installed — install git to enable version history.</p>;
-  }
-  if (kind !== "personal") {
-    return (
-      <p className="text-sm text-muted">
-        Version history is for your own skills. This is a {KIND_TAG[kind].label.toLowerCase()} skill — use{" "}
-        <span className="font-medium text-fg">Sync</span> below to make an editable copy you can version.
-      </p>
-    );
-  }
-  if (info.inParentRepo) {
-    return (
-      <p className="text-sm text-muted">
-        Tracked by a parent repository
-        {info.toplevel ? (
-          <>
-            {" "}
-            (<span className="font-mono text-[0.8em] text-faint">{info.toplevel}</span>)
-          </>
-        ) : null}
-        . Manage history there.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {!info.isRepo ? (
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted">Not tracked yet. Start a version history for this skill.</p>
-          <button type="button" onClick={startTracking} disabled={busy} className={btnPrimary}>
-            {busy ? "…" : "Start tracking"}
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2 text-sm">
-              <span className={`h-1.5 w-1.5 rounded-full ${info.dirty ? "bg-warn" : "bg-ok"}`} aria-hidden />
-              <span className="text-fg">{info.dirty ? "Changes since last version" : "Up to date"}</span>
-              {info.branch && <span className="font-mono text-xs text-faint">{info.branch}</span>}
-            </span>
-            <button
-              type="button"
-              onClick={openCommit}
-              disabled={busy || !info.dirty || !info.hasIdentity}
-              title={!info.hasIdentity ? "Set a git identity first" : !info.dirty ? "No changes since your last version" : "Save a version"}
-              className={btnPrimary}
-            >
-              Save a version
-            </button>
-          </div>
-
-          {!info.hasIdentity && (
-            <p className="rounded-md bg-panel px-2.5 py-2 text-xs text-warn">
-              Set a git identity to save versions:{" "}
-              <code className="font-mono">git config --global user.email "you@example.com"</code> (and{" "}
-              <code className="font-mono">user.name</code>).
-            </p>
-          )}
-
-          {commitOpen && (
-            <div className="rounded-lg border border-border bg-app p-2.5">
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                rows={2}
-                autoFocus
-                placeholder="Describe what changed…"
-                className="w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-accent"
-              />
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={generate}
-                  disabled={busy || generating}
-                  title="Draft a message from your changes with on-device AI"
-                  className={btnGhost}
-                >
-                  {generating ? "Generating…" : "✨ Generate"}
-                </button>
-                <div className="ml-auto flex gap-2">
-                  <button type="button" onClick={() => setCommitOpen(false)} className={btnGhost}>
-                    Cancel
-                  </button>
-                  <button type="button" onClick={doCommit} disabled={busy || generating || !message.trim()} className={btnPrimary}>
-                    {busy ? "Saving…" : "Save version"}
-                  </button>
-                </div>
-              </div>
-              {modelStatus && !modelStatus.downloaded && (
-                <p className="mt-2 text-[0.7rem] text-faint">
-                  First use downloads the local AI model (~1–1.5 GB), one time. Generation runs fully on your machine.
-                </p>
-              )}
-            </div>
-          )}
-
-          {log.length > 0 && (
-            <ul className="space-y-0 overflow-hidden rounded-lg border border-border">
-              {log.slice(0, 5).map((c) => (
-                <li key={c.sha} className="flex items-baseline gap-2 border-t border-border px-2.5 py-1.5 text-xs first:border-t-0">
-                  <code className="shrink-0 font-mono text-faint">{c.short}</code>
-                  <span className="min-w-0 flex-1 truncate text-fg" title={c.message}>
-                    {c.message}
-                  </span>
-                  <span className="shrink-0 text-faint">{c.relativeDate}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-      {err && <p className="text-xs text-danger">{err}</p>}
-    </div>
   );
 }
 
@@ -441,6 +221,7 @@ export default function ManagePanel({
   /** Called after the skill folder is deleted, so the host can navigate away. */
   onDeleted: () => void;
 }) {
+  const navigate = useNavigate();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -462,11 +243,23 @@ export default function ManagePanel({
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
-          <Section title="Version">
-            <VersionSection root={root} dirName={dirName} kind={kind} />
-          </Section>
           <Section title="Secrets">
-            <SecretsManager />
+            <div className="space-y-2.5">
+              <p className="text-xs text-muted">
+                API keys and tokens live on their own page now — stored on this machine, with cloud sync and team
+                sharing coming soon.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  navigate(secretsPath());
+                }}
+                className={btnGhost}
+              >
+                Open Secrets →
+              </button>
+            </div>
           </Section>
           <Section title="Sync to another agent">
             <SyncSection root={root} />

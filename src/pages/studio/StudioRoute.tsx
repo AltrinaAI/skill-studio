@@ -4,11 +4,11 @@ import { Spinner } from "@/components/ui";
 import NavBar from "@/components/NavBar";
 import { addRecent } from "@/lib/recents";
 import { skillKind } from "@/lib/agents";
-import { loadSkill } from "@/lib/api";
+import { loadSkill, gitInfo, gitEnterVersion, gitExitVersion, gitKeepVersion } from "@/lib/api";
 import type { SkillData } from "@/lib/types";
 import { reconcileRequiredEnv, runSaveHooks } from "./saveHooks";
-import { isEditorDirty } from "@/lib/editorState";
-import { StudioProvider, skillName } from "./StudioContext";
+import { isEditorDirty, flushEditor, holdAutosave, releaseAutosave } from "@/lib/editorState";
+import { StudioProvider, skillName, type VersionPreview } from "./StudioContext";
 import { useEagerCommitDraft } from "./useEagerCommitDraft";
 import StudioLayout from "./StudioLayout";
 
@@ -28,18 +28,25 @@ export function Component() {
   const [error, setError] = useState<string | null>(null);
   const [docVersion, setDocVersion] = useState(0);
   const [gitVersion, setGitVersion] = useState(0);
+  // Non-null while viewing a past version (its content is checked out into the
+  // working tree). Reset on every skill change; re-detected below for recovery.
+  const [preview, setPreview] = useState<VersionPreview | null>(null);
 
   // Live `data` for async callbacks that may resolve after a navigation.
   const dataRef = useRef<SkillData | null>(null);
   useEffect(() => {
     dataRef.current = data;
   });
+  // Serialize version transitions so two concurrent ones (e.g. rapid version
+  // clicks) can't interleave git stash/checkout commands on the same repo.
+  const transitionRef = useRef(false);
 
   // (Re)load whenever the routed skill root changes.
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setData(null);
+    setPreview(null);
     (async () => {
       try {
         // Reconcile required-env on open so the declaration is current before edits.
@@ -47,6 +54,18 @@ export function Component() {
         if (cancelled) return;
         setData(sd);
         addRecent({ root: sd.root, name: skillName(sd) });
+        // Recovery: a skill left mid-preview (detached HEAD, e.g. after a reload)
+        // has an old version as its working tree — surface the banner so the user
+        // can return to current. Best-effort; a non-preview detach still offers it.
+        void gitInfo(sd.root)
+          .then((info) => {
+            if (cancelled || transitionRef.current) return;
+            // Only surface the recovery banner if we don't ALREADY have a real
+            // preview — a version click can win this race, and its {sha, number}
+            // must not be clobbered by this generic {sha:"", number:0}.
+            if (info.isRepo && !info.branch) setPreview((prev) => prev ?? { sha: "", number: 0 });
+          })
+          .catch(() => {});
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : "Failed to load skill");
@@ -96,31 +115,93 @@ export function Component() {
   // which is always present — so this hook runs above the loading/error returns.
   useEagerCommitDraft(root);
 
-  // Git changed on disk from within the app (commit / discard). Bump gitVersion
-  // so open diff overlays refetch their HEAD baseline; re-read the skill so the
-  // editor reflects reverted content, remounting it (docVersion) only when it's
-  // not mid-edit, so live keystrokes are never dropped.
-  const reload = useCallback(() => {
+  // Git changed on disk from within the app (commit / discard / version swap).
+  // Bump gitVersion so open diff overlays refetch their HEAD baseline; re-read the
+  // skill so the editor reflects the new content, remounting it (docVersion) when
+  // not mid-edit — or always when `force` (the working tree was deliberately
+  // swapped, so the in-memory buffer is stale and must be replaced).
+  const reloadAsync = useCallback(async (force = false) => {
     const cur = dataRef.current;
     if (!cur) return;
     setGitVersion((v) => v + 1);
-    (async () => {
-      try {
-        const sd = await loadSkill(cur.root);
-        if (dataRef.current?.root !== sd.root) return;
-        setData(sd);
-        dataRef.current = sd;
-        if (!isEditorDirty()) setDocVersion((v) => v + 1);
-      } catch {
-        /* a transient read failure just leaves the current data in place */
-      }
-    })();
+    try {
+      const sd = await loadSkill(cur.root);
+      if (dataRef.current?.root !== sd.root) return;
+      setData(sd);
+      dataRef.current = sd;
+      if (force || !isEditorDirty()) setDocVersion((v) => v + 1);
+    } catch {
+      /* a transient read failure just leaves the current data in place */
+    }
   }, []);
+  const reload = useCallback((force = false) => void reloadAsync(force), [reloadAsync]);
+
+  // ---- version preview: view/edit a past version through the full editor -----
+  // Each transition swaps the working tree under the mounted editor, so we (1)
+  // flush pending edits to disk first (they get stashed, not lost), (2) hold
+  // autosave so the remount's unmount-flush can't clobber the freshly checked-out
+  // version, and (3) release after the remount commits (deferred a tick).
+  const enterVersion = useCallback(
+    async (sha: string, number: number) => {
+      const cur = dataRef.current;
+      if (!cur || transitionRef.current) return; // drop a click while one is in flight
+      transitionRef.current = true;
+      await flushEditor();
+      holdAutosave();
+      try {
+        await gitEnterVersion(cur.root, sha);
+        setPreview({ sha, number });
+        await reloadAsync(true);
+      } finally {
+        transitionRef.current = false;
+        setTimeout(releaseAutosave, 0);
+      }
+    },
+    [reloadAsync],
+  );
+  const exitVersion = useCallback(async () => {
+    const cur = dataRef.current;
+    if (!cur || transitionRef.current) return;
+    transitionRef.current = true;
+    holdAutosave();
+    try {
+      await gitExitVersion(cur.root);
+      setPreview(null);
+      await reloadAsync(true);
+    } finally {
+      transitionRef.current = false;
+      setTimeout(releaseAutosave, 0);
+    }
+  }, [reloadAsync]);
+  const keepVersion = useCallback(
+    async (message: string) => {
+      const cur = dataRef.current;
+      if (!cur) return;
+      // Share the transition lock with enter/exit so a version action can't
+      // interleave its git mutations with this save. Throw (not silently return)
+      // so doCommit surfaces it instead of reporting a phantom success.
+      if (transitionRef.current) throw new Error("Another version action is in progress — try again.");
+      transitionRef.current = true;
+      await flushEditor();
+      holdAutosave();
+      try {
+        await gitKeepVersion(cur.root, message);
+        setPreview(null);
+        await reloadAsync(true);
+      } finally {
+        transitionRef.current = false;
+        setTimeout(releaseAutosave, 0);
+      }
+    },
+    [reloadAsync],
+  );
 
   if (error) return <SkillErrorShell root={root} message={error} />;
   if (!data) return <SkillLoadingShell />;
   return (
-    <StudioProvider value={{ data, docVersion, gitVersion, bumpGit, afterSave, reload }}>
+    <StudioProvider
+      value={{ data, docVersion, gitVersion, bumpGit, afterSave, reload, preview, enterVersion, exitVersion, keepVersion }}
+    >
       <StudioLayout />
     </StudioProvider>
   );

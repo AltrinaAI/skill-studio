@@ -214,6 +214,25 @@ async fn git_discard_all(root: String) -> Result<(), String> {
     gitops::git_discard_all(&root)
 }
 
+/// Enter "version preview": stash any uncommitted work and check the past version
+/// into the working tree (detached) so the full editor renders it as if current.
+#[tauri::command]
+async fn git_enter_version(root: String, sha: String) -> Result<gitops::PreviewState, String> {
+    gitops::git_enter_version(&root, &sha)
+}
+
+/// Leave version preview: reattach to the branch and restore the set-aside work.
+#[tauri::command]
+async fn git_exit_version(root: String) -> Result<gitops::GitInfo, String> {
+    gitops::git_exit_version(&root)
+}
+
+/// Save the previewed/edited version as a new linear version on the branch tip.
+#[tauri::command]
+async fn git_keep_version(root: String, message: String) -> Result<gitops::CommitResult, String> {
+    gitops::git_keep_version(&root, &message)
+}
+
 #[tauri::command]
 async fn secrets_status() -> Result<secrets::SecretsStatus, String> {
     secrets::secrets_status()
@@ -394,6 +413,9 @@ pub fn run() {
             git_files_at,
             git_discard,
             git_discard_all,
+            git_enter_version,
+            git_exit_version,
+            git_keep_version,
             secrets_status,
             secrets_list,
             secret_set,

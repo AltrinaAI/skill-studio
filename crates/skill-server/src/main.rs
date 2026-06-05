@@ -234,6 +234,9 @@ fn handle(method: &Method, url: &str, body: &str, dist: &Path) -> Reply {
         (Method::Post, "/api/git-discard-all") => {
             json_reply(gitops::git_discard_all(&s("root")).map(|_| json!({ "ok": true })))
         }
+        (Method::Post, "/api/git-enter-version") => json_reply(gitops::git_enter_version(&s("root"), &s("sha"))),
+        (Method::Post, "/api/git-exit-version") => json_reply(gitops::git_exit_version(&s("root"))),
+        (Method::Post, "/api/git-keep-version") => json_reply(gitops::git_keep_version(&s("root"), &s("message"))),
         (Method::Get, "/api/secrets-status") => json_reply(secrets::secrets_status()),
         (Method::Get, "/api/secrets-list") => json_reply(secrets::secrets_list()),
         (Method::Post, "/api/secret-set") => {

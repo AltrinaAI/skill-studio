@@ -248,15 +248,19 @@ pub fn git_log(root: &str, limit: usize) -> Result<Vec<Commit>, String> {
     }
     let root_path = PathBuf::from(root);
     let n = limit.clamp(1, 200).to_string();
+    // List from the live branch — or, while previewing a past version (detached
+    // HEAD), the branch we detached from — so the full version list stays visible,
+    // including versions NEWER than the one currently being previewed.
+    let href = history_ref(&root_path);
     // Unit-separator (0x1f) between fields; newline between commits.
-    let out = git(&root_path, &["log", "-n", &n, "--pretty=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%ar"])?;
+    let out = git(&root_path, &["log", "-n", &n, "--pretty=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%ar", &href])?;
     if !out.status.success() {
         return Ok(vec![]); // not a repo yet / no commits
     }
-    // Total commits reachable from HEAD → the newest commit's version number.
-    // Each line (newest first) is one history position, so line i has number
-    // total - i, correct even when the log is capped below the total.
-    let total: usize = git_ok(&root_path, &["rev-list", "--count", "HEAD"])
+    // Total commits reachable from the history ref → the newest commit's version
+    // number. Each line (newest first) is one history position, so line i has
+    // number total - i, correct even when the log is capped below the total.
+    let total: usize = git_ok(&root_path, &["rev-list", "--count", &href])
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let text = String::from_utf8_lossy(&out.stdout);
@@ -586,6 +590,244 @@ pub fn git_discard_all(root: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ---- version preview (stash + detached checkout, linear reconcile) ----------
+//
+// Viewing a past "version" reuses the FULL live editor by making the working tree
+// BE that version: we stash any uncommitted work, then detach HEAD onto the chosen
+// commit so the on-disk skill IS the old version (markdown renders, files browse,
+// edits autosave — all the normal UI, unchanged). Returning restores the work we
+// set aside. Editing a previewed version and SAVING it lands a single forward
+// commit on the branch tip (linear history); the set-aside work is then discarded.
+// These mutate the WHOLE repo (stash/detach), so they're gated to a skill that IS
+// its own repository — a skill nested in a parent repo manages versions there.
+
+/// Stash message tagging the work we set aside to preview a version, so later we
+/// consume EXACTLY that stash (never an unrelated one the user made) and so a
+/// crash leaves a findable, single entry rather than a pile.
+const PREVIEW_STASH_MSG: &str = "skill-studio: version preview";
+/// Local-config key remembering the branch we detached from, so returning to
+/// "current" — or recovering after a crash/reload — reattaches to the right place.
+const PREVIEW_BRANCH_CFG: &str = "skillstudio.previewbranch";
+
+/// The branch HEAD points at, or None when detached (i.e. mid-preview).
+fn current_branch(root: &Path) -> Option<String> {
+    git_ok(root, &["symbolic-ref", "--short", "-q", "HEAD"]).filter(|s| !s.is_empty())
+}
+
+/// The ref whose linear history defines the version list: the live branch when
+/// attached, else the branch we detached from to preview a version (kept in
+/// local config), else HEAD. Lets the full version list show during a preview.
+fn history_ref(root: &Path) -> String {
+    if let Some(b) = current_branch(root) {
+        return b;
+    }
+    git_ok(root, &["config", "--local", "--get", PREVIEW_BRANCH_CFG])
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "HEAD".to_string())
+}
+
+/// The `stash@{N}` ref of our version-preview stash, if present. Matched by
+/// message so we only ever touch the stash WE created (not the user's own).
+fn find_preview_stash(root: &Path) -> Option<String> {
+    let list = git_ok(root, &["stash", "list", "--format=%gd%x1f%gs"])?;
+    for line in list.lines() {
+        let mut parts = line.split('\u{1f}');
+        let reflog = parts.next().unwrap_or("");
+        let subject = parts.next().unwrap_or("");
+        if subject.contains(PREVIEW_STASH_MSG) {
+            return Some(reflog.to_string());
+        }
+    }
+    None
+}
+
+/// Gate the whole-repo version ops to a skill that IS its own git repository
+/// (stash + detached checkout would otherwise disturb an unrelated parent repo).
+fn ensure_own_repo(root: &str) -> Result<PathBuf, String> {
+    if !git_available() {
+        return Err("Git isn't installed.".into());
+    }
+    let info = git_info(root)?;
+    if !info.is_repo {
+        return Err("Version preview needs the skill to be tracked in its own repository.".into());
+    }
+    Ok(PathBuf::from(root))
+}
+
+/// Set aside uncommitted work + reattach to the branch, restoring that work. The
+/// shared "leave preview" path: also used to unwind a prior preview before
+/// entering a new one (so previews never stack), and to recover after a crash.
+/// Discards any unsaved detached-state edits (a preview edit is kept only by
+/// SAVING it). Never leaves our preview stash behind.
+fn exit_preview(root_path: &Path) -> Result<(), String> {
+    let branch = current_branch(root_path).unwrap_or_else(|| history_ref(root_path));
+    if branch != "HEAD" {
+        // -f discards the detached preview edits and reattaches to the branch tip.
+        let co = git(root_path, &["checkout", "-f", &branch])?;
+        if !co.status.success() {
+            return Err(String::from_utf8_lossy(&co.stderr).trim().to_string());
+        }
+    }
+    if let Some(stash_ref) = find_preview_stash(root_path) {
+        // Restore the work we set aside on entry. A conflict here means the branch
+        // tip moved under the preview (e.g. an external commit), so the set-aside
+        // work no longer applies cleanly. NEVER leave conflict markers / an
+        // unmerged index behind: wordless autosave would silently overwrite the
+        // markers, and a later re-enter would fail on the unmerged index. Clear the
+        // half-applied merge back to a clean tip and KEEP the work safe in the
+        // stash for manual recovery (`git stash pop`) rather than dropping it.
+        let pop = git(root_path, &["stash", "pop", &stash_ref])?;
+        if !pop.status.success() && branch != "HEAD" {
+            let _ = git(root_path, &["checkout", "-f", &branch]);
+        }
+    }
+    let _ = git(root_path, &["config", "--local", "--unset", PREVIEW_BRANCH_CFG]);
+    Ok(())
+}
+
+/// The result of entering version preview, for the UI's banner/state.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewState {
+    /// True when uncommitted work was set aside (stashed) to show this version.
+    stashed: bool,
+    /// The branch we'll return to (recorded so exit/keep is crash-safe).
+    branch: Option<String>,
+}
+
+/// Enter "version preview": make the working tree BE the past version `sha`
+/// (detaching HEAD onto it) so the full live editor renders it. Any uncommitted
+/// work is stashed first and restored on exit. Idempotent — a preview already in
+/// progress is unwound first, so previews never stack and stashes never pile up.
+pub fn git_enter_version(root: &str, sha: &str) -> Result<PreviewState, String> {
+    let root_path = ensure_own_repo(root)?;
+    if !is_hex_rev(sha) {
+        return Err("Invalid version reference.".into());
+    }
+    // Resolve to a real commit object (rejects partial/garbage refs cleanly).
+    let target = git_ok(&root_path, &["rev-parse", "--verify", "-q", &format!("{sha}^{{commit}}")])
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "That version no longer exists.".to_string())?;
+
+    // Already mid-preview (detached)? Unwind it first — restores the original work
+    // and avoids stacking a second stash on top of the first.
+    if current_branch(&root_path).is_none() {
+        exit_preview(&root_path)?;
+    }
+
+    let branch = current_branch(&root_path)
+        .ok_or_else(|| "Couldn't determine the current branch to return to.".to_string())?;
+    // Remember where to return BEFORE detaching (survives a crash/reload).
+    let _ = git(&root_path, &["config", "--local", PREVIEW_BRANCH_CFG, &branch]);
+
+    // Set aside uncommitted work (tracked + untracked) so the version shows clean.
+    let dirty = git_ok(&root_path, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false);
+    let mut stashed = false;
+    if dirty {
+        let out = git(&root_path, &["stash", "push", "--include-untracked", "-m", PREVIEW_STASH_MSG])?;
+        if !out.status.success() {
+            let _ = git(&root_path, &["config", "--local", "--unset", PREVIEW_BRANCH_CFG]);
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        stashed = find_preview_stash(&root_path).is_some();
+    }
+
+    // Detach onto the version: the working tree now IS that version, clean.
+    let co = git(&root_path, &["-c", "advice.detachedHead=false", "checkout", "--detach", &target])?;
+    if !co.status.success() {
+        let msg = String::from_utf8_lossy(&co.stderr).trim().to_string();
+        let _ = exit_preview(&root_path); // never strand the user: restore + reattach
+        return Err(msg);
+    }
+
+    Ok(PreviewState { stashed, branch: Some(branch) })
+}
+
+/// Leave version preview: discard unsaved preview edits, reattach to the branch we
+/// detached from, and restore the work set aside on entry. Returns fresh GitInfo.
+pub fn git_exit_version(root: &str) -> Result<GitInfo, String> {
+    let root_path = ensure_own_repo(root)?;
+    exit_preview(&root_path)?;
+    git_info(root)
+}
+
+/// Save the previewed-(and-edited) version as a NEW version with LINEAR history:
+/// commit the current working tree onto the branch TIP (not the detached old
+/// commit), advance the branch, and reattach HEAD to it. The set-aside work is
+/// then discarded (the user chose this direction) so no stash piles up.
+pub fn git_keep_version(root: &str, message: &str) -> Result<CommitResult, String> {
+    let root_path = ensure_own_repo(root)?;
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err("Enter a version description.".into());
+    }
+    // commit-tree needs BOTH name and email; checking only email would let the
+    // guard pass and then fail opaquely ("empty ident name") inside commit-tree.
+    let missing_ident = git_ok(&root_path, &["config", "user.email"]).map(|s| s.is_empty()).unwrap_or(true)
+        || git_ok(&root_path, &["config", "user.name"]).map(|s| s.is_empty()).unwrap_or(true);
+    if missing_ident {
+        return Err(
+            "No git identity set. Run: git config --global user.email \"you@example.com\" and user.name \"Your Name\".".into(),
+        );
+    }
+    // Not actually mid-preview (HEAD attached) → an ordinary save on the branch.
+    if current_branch(&root_path).is_some() {
+        return git_commit(root, message);
+    }
+    let branch = git_ok(&root_path, &["config", "--local", "--get", PREVIEW_BRANCH_CFG])
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // Marker lost (crash) but a single local branch → unambiguous fallback.
+            let list = git_ok(&root_path, &["branch", "--format=%(refname:short)"]).unwrap_or_default();
+            let mut it = list.lines().filter(|l| !l.is_empty());
+            match (it.next(), it.next()) {
+                (Some(only), None) => Some(only.to_string()),
+                _ => None,
+            }
+        })
+        .ok_or_else(|| "Couldn't determine which branch to save onto.".to_string())?;
+
+    let tip = git_ok(&root_path, &["rev-parse", "--verify", &format!("refs/heads/{branch}")])
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Couldn't find the current branch tip.".to_string())?;
+
+    // Stage the working tree (old version + your edits) and snapshot it as a tree.
+    let add = git(&root_path, &["add", "-A"])?;
+    if !add.status.success() {
+        return Err(String::from_utf8_lossy(&add.stderr).trim().to_string());
+    }
+    let tree =
+        git_ok(&root_path, &["write-tree"]).filter(|s| !s.is_empty()).ok_or_else(|| "Couldn't snapshot your changes.".to_string())?;
+    // One forward commit on top of the tip → single parent → history stays linear.
+    let ct = git(&root_path, &["commit-tree", &tree, "-p", &tip, "-m", msg])?;
+    if !ct.status.success() {
+        return Err(String::from_utf8_lossy(&ct.stderr).trim().to_string());
+    }
+    let new = String::from_utf8_lossy(&ct.stdout).trim().to_string();
+    if new.is_empty() {
+        return Err("Couldn't create the new version.".into());
+    }
+    // Advance the branch (guarded by the expected old tip) and reattach HEAD to it.
+    let upd = git(&root_path, &["update-ref", &format!("refs/heads/{branch}"), &new, &tip])?;
+    if !upd.status.success() {
+        return Err(String::from_utf8_lossy(&upd.stderr).trim().to_string());
+    }
+    let sym = git(&root_path, &["symbolic-ref", "HEAD", &format!("refs/heads/{branch}")])?;
+    if !sym.status.success() {
+        return Err(String::from_utf8_lossy(&sym.stderr).trim().to_string());
+    }
+    // Discard the set-aside work + the branch marker — clean slate, no pile-up.
+    if let Some(stash_ref) = find_preview_stash(&root_path) {
+        let _ = git(&root_path, &["stash", "drop", &stash_ref]);
+    }
+    let _ = git(&root_path, &["config", "--local", "--unset", PREVIEW_BRANCH_CFG]);
+
+    Ok(CommitResult {
+        sha: new.clone(),
+        summary: git_ok(&root_path, &["log", "-1", "--pretty=%s", &new]).unwrap_or_default(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,6 +983,136 @@ mod tests {
         let restored = std::fs::read_to_string(skill.join("SKILL.md")).unwrap();
         assert!(restored.contains("name: t") && !restored.contains("hi there"));
         assert_eq!(std::fs::read_to_string(base.join("README.md")).unwrap(), "outer changed\n");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn version_preview_stash_checkout_and_linear_reconcile() {
+        if !git_available() {
+            return; // skip on machines without git
+        }
+        let base = std::env::temp_dir().join(format!("ass_preview_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let root = base.to_string_lossy().to_string();
+        let write = |name: &str, body: &str| std::fs::write(base.join(name), body).unwrap();
+
+        git_init(&root).unwrap();
+        let _ = git(&base, &["config", "user.email", "test@example.com"]);
+        let _ = git(&base, &["config", "user.name", "Test"]);
+        let _ = git(&base, &["config", "commit.gpgsign", "false"]);
+
+        // Three versions on one linear branch.
+        write("SKILL.md", "---\nname: t\n---\nv1");
+        git_commit(&root, "v1").unwrap();
+        write("SKILL.md", "---\nname: t\n---\nv2");
+        git_commit(&root, "v2").unwrap();
+        write("SKILL.md", "---\nname: t\n---\nv3");
+        git_commit(&root, "v3").unwrap();
+
+        let log = git_log(&root, 10).unwrap();
+        assert_eq!(log.len(), 3);
+        let v1_sha = log[2].sha.clone(); // oldest
+        let v3_sha = log[0].sha.clone(); // newest = tip
+        let branch = current_branch(&base).expect("on a branch");
+
+        // Uncommitted work: a tracked edit + an untracked file.
+        write("SKILL.md", "---\nname: t\n---\nwip");
+        write("NOTES.md", "wipnote");
+
+        // Enter v1: work is set aside, the working tree BECOMES v1, HEAD detaches,
+        // and the FULL version list still shows (logs the branch, not detached HEAD).
+        let st = git_enter_version(&root, &v1_sha).unwrap();
+        assert!(st.stashed, "uncommitted work was stashed");
+        assert!(current_branch(&base).is_none(), "HEAD detached during preview");
+        assert!(std::fs::read_to_string(base.join("SKILL.md")).unwrap().contains("v1"));
+        assert!(!base.join("NOTES.md").exists(), "untracked work set aside");
+        assert!(find_preview_stash(&base).is_some());
+        assert_eq!(git_log(&root, 10).unwrap().len(), 3, "full version list visible mid-preview");
+
+        // Edit the previewed version and SAVE → a new version on top of the TIP.
+        write("SKILL.md", "---\nname: t\n---\nv1-edited");
+        let res = git_keep_version(&root, "edit based on v1").unwrap();
+        assert!(!res.sha.is_empty());
+        assert_eq!(current_branch(&base).as_deref(), Some(branch.as_str()), "reattached to the branch");
+        let log2 = git_log(&root, 10).unwrap();
+        assert_eq!(log2.len(), 4, "exactly one new version");
+        assert_eq!(log2[0].sha, res.sha, "the new version is the tip");
+        // Linear history: the new commit's ONLY parent is the previous tip (v3).
+        let parents = git_ok(&base, &["rev-list", "--parents", "-n", "1", &res.sha]).unwrap();
+        let cols: Vec<&str> = parents.split_whitespace().collect();
+        assert_eq!(cols.len(), 2, "single parent — no branch/merge");
+        assert_eq!(cols[1], v3_sha, "new version sits on the old tip");
+        assert!(std::fs::read_to_string(base.join("SKILL.md")).unwrap().contains("v1-edited"));
+        assert!(!base.join("NOTES.md").exists(), "set-aside work discarded on save");
+        assert!(find_preview_stash(&base).is_none(), "no stash pile-up after save");
+
+        // Exit (no save) restores the set-aside work and creates no version.
+        write("SKILL.md", "---\nname: t\n---\nwip2");
+        write("NOTES.md", "wip2note");
+        git_enter_version(&root, &v1_sha).unwrap();
+        assert!(std::fs::read_to_string(base.join("SKILL.md")).unwrap().contains("v1"));
+        git_exit_version(&root).unwrap();
+        assert_eq!(current_branch(&base).as_deref(), Some(branch.as_str()));
+        assert!(std::fs::read_to_string(base.join("SKILL.md")).unwrap().contains("wip2"), "edit restored");
+        assert!(base.join("NOTES.md").exists(), "untracked work restored on exit");
+        assert!(find_preview_stash(&base).is_none(), "no stash left behind");
+        assert_eq!(git_log(&root, 10).unwrap().len(), 4, "exit creates no version");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn exit_preview_recovers_cleanly_when_tip_moves_under_it() {
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("ass_preview_conflict_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let root = base.to_string_lossy().to_string();
+        let w = |body: &str| std::fs::write(base.join("SKILL.md"), body).unwrap();
+
+        git_init(&root).unwrap();
+        let _ = git(&base, &["config", "user.email", "test@example.com"]);
+        let _ = git(&base, &["config", "user.name", "Test"]);
+        let _ = git(&base, &["config", "commit.gpgsign", "false"]);
+
+        w("---\nname: t\n---\nv1");
+        git_commit(&root, "v1").unwrap();
+        w("---\nname: t\n---\nv2");
+        git_commit(&root, "v2").unwrap();
+        let log = git_log(&root, 10).unwrap();
+        let v1 = log[1].sha.clone();
+        let tip = log[0].sha.clone();
+        let branch = current_branch(&base).unwrap();
+
+        // Uncommitted WIP, then enter v1 (stashes the WIP, detaches onto v1).
+        w("---\nname: t\n---\nWIP-LINE");
+        git_enter_version(&root, &v1).unwrap();
+        assert!(find_preview_stash(&base).is_some());
+
+        // Move the branch tip OUT from under the preview to a commit that conflicts
+        // with the stashed WIP (simulating an external edit to the same file).
+        w("---\nname: t\n---\nEXTERNAL-LINE");
+        let _ = git(&base, &["add", "-A"]);
+        let tree = git_ok(&base, &["write-tree"]).unwrap();
+        let ext = git_ok(&base, &["commit-tree", &tree, "-p", &tip, "-m", "external"]).unwrap();
+        let _ = git(&base, &["update-ref", &format!("refs/heads/{branch}"), &ext]);
+        let _ = git(&base, &["checkout", "-f", &v1]); // back to the clean detached preview
+
+        // Exit: the stash pop CONFLICTS (its base is the old tip, not `ext`). The fix
+        // must leave NO conflict markers / unmerged index, return to a clean tip, and
+        // KEEP the set-aside work in the stash (recoverable, never silently lost).
+        git_exit_version(&root).unwrap();
+        let content = std::fs::read_to_string(base.join("SKILL.md")).unwrap();
+        assert!(!content.contains("<<<<<<<") && !content.contains(">>>>>>>"), "no conflict markers left: {content}");
+        assert!(content.contains("EXTERNAL-LINE"), "working tree is the clean new tip, got: {content}");
+        let porcelain = git_ok(&base, &["status", "--porcelain"]).unwrap_or_default();
+        assert!(!porcelain.contains("UU"), "no unmerged index entry: {porcelain}");
+        assert!(find_preview_stash(&base).is_some(), "set-aside work kept (recoverable), not lost");
+        assert_eq!(current_branch(&base).as_deref(), Some(branch.as_str()), "reattached to the branch");
 
         let _ = std::fs::remove_dir_all(&base);
     }

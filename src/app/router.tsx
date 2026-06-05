@@ -18,6 +18,7 @@ export const router = createHashRouter([
     HydrateFallback: RootFallback,
     children: [
       { index: true, lazy: () => import("@/pages/home/HomeRoute") },
+      { path: "secrets", lazy: () => import("@/pages/secrets/SecretsRoute") },
       // The Terminals UI is the always-mounted host in AppShell; this route only
       // owns the URL/visibility, so its own element renders nothing.
       { path: "terminals", element: null },

@@ -7,13 +7,12 @@ import { FolderIcon } from "@/components/FileIcon";
 import FolderPicker from "@/components/FolderPicker";
 import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillDialog from "./ImportSkillDialog";
-import SecretsManager from "@/components/SecretsManager";
 import { useRecents, removeRecent } from "@/lib/recents";
 import { agentColor, kindMeta, KIND_TAG, AGENT_GROUP_INFO } from "@/lib/agents";
 import * as api from "@/lib/api";
 import type { AgentSkills, DiscoveredSkill } from "@/lib/api";
 import { useNavigate } from "react-router-dom";
-import { studioPath } from "@/lib/routes";
+import { secretsPath, studioPath } from "@/lib/routes";
 import { toggleTheme } from "@/lib/theme";
 
 const EXAMPLES = [
@@ -85,6 +84,16 @@ function CheckIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 /** Pill flagging a skill with uncommitted git changes in its own folder. */
 function ChangesTag() {
   return (
@@ -115,39 +124,88 @@ const byKindThenName = (a: DiscoveredSkill, b: DiscoveredSkill) =>
   kindMeta(a.kind).rank - kindMeta(b.kind).rank ||
   (a.name ?? baseName(a.root)).localeCompare(b.name ?? baseName(b.root));
 
-function SkillCard({ skill, dirty, onOpen }: { skill: DiscoveredSkill; dirty?: boolean; onOpen: (p: string) => void }) {
+function SkillCard({
+  skill,
+  dirty,
+  deletable,
+  deleting,
+  onOpen,
+  onDelete,
+}: {
+  skill: DiscoveredSkill;
+  dirty?: boolean;
+  deletable?: boolean;
+  deleting?: boolean;
+  onOpen: (p: string) => void;
+  onDelete?: (skill: DiscoveredSkill) => void;
+}) {
   const name = skill.name ?? baseName(skill.root);
   const tag = KIND_TAG[kindMeta(skill.kind).kind];
   return (
-    <button type="button" onClick={() => onOpen(skill.root)} className={cardCls}>
-      <div className="flex items-center gap-2">
-        <FolderIcon open={false} name={name} />
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{name}</span>
-        {dirty && <ChangesTag />}
-        <span className={`${pillCls} ${tag.cls}`}>
-          {tag.label}
+    <div className="group relative h-full">
+      {/* h-full + w-full: a <button> shrink-wraps its content (unlike a div), so
+          inside this wrapper it must be told to fill the grid cell — w-full or it
+          overflows the column, h-full so sibling cards stay equal-height and the
+          delete control anchors to the real card bottom (not floating in dead
+          space below a short card). */}
+      <button type="button" onClick={() => onOpen(skill.root)} className={`${cardCls} h-full w-full`}>
+        <div className="flex items-center gap-2">
+          <FolderIcon open={false} name={name} />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{name}</span>
+          {dirty && <ChangesTag />}
+          <span className={`${pillCls} ${tag.cls}`}>
+            {tag.label}
+          </span>
+        </div>
+        {skill.project && (
+          <span className="inline-flex max-w-full items-center gap-1 text-[0.7rem] font-medium text-accent" title={`Project skill in ${skill.project}`}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+            <span className="truncate">{skill.project}</span>
+          </span>
+        )}
+        {skill.description && <p className="line-clamp-2 text-xs leading-relaxed text-muted">{skill.description}</p>}
+        <span className="mt-auto truncate pt-0.5 pr-7 font-mono text-[0.7rem] text-faint" title={skill.root}>
+          {skill.root}
         </span>
-      </div>
-      {skill.project && (
-        <span className="inline-flex max-w-full items-center gap-1 text-[0.7rem] font-medium text-accent" title={`Project skill in ${skill.project}`}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          </svg>
-          <span className="truncate">{skill.project}</span>
-        </span>
+      </button>
+      {deletable && onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onDelete(skill);
+          }}
+          disabled={deleting}
+          aria-label={`Delete ${name}`}
+          title="Delete skill"
+          className="absolute bottom-2 right-2 rounded p-1 text-faint opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 disabled:opacity-40 group-hover:disabled:opacity-40"
+        >
+          {deleting ? <Spinner className="h-3 w-3" /> : <TrashIcon />}
+        </button>
       )}
-      {skill.description && <p className="line-clamp-2 text-xs leading-relaxed text-muted">{skill.description}</p>}
-      <span className="mt-auto truncate pt-0.5 font-mono text-[0.7rem] text-faint" title={skill.root}>
-        {skill.root}
-      </span>
-    </button>
+    </div>
   );
 }
 
 // One section per agent (the skill's source). Only your own skills show as cards;
 // everything you didn't author — built-in/official skills and third-party plugins —
 // collapses together behind a single toggle (default collapsed).
-function AgentSection({ group, dirtyRoots, onOpen }: { group: AgentSkills; dirtyRoots: Set<string>; onOpen: (p: string) => void }) {
+function AgentSection({
+  group,
+  dirtyRoots,
+  deletingRoot,
+  onOpen,
+  onDelete,
+}: {
+  group: AgentSkills;
+  dirtyRoots: Set<string>;
+  deletingRoot: string | null;
+  onOpen: (p: string) => void;
+  onDelete: (skill: DiscoveredSkill) => void;
+}) {
   const [showBundled, setShowBundled] = useState(false);
   if (group.skills.length === 0) return null;
   const own = group.skills.filter((s) => kindMeta(s.kind).kind === "personal").sort(byKindThenName);
@@ -193,7 +251,15 @@ function AgentSection({ group, dirtyRoots, onOpen }: { group: AgentSkills; dirty
       {own.length > 0 && (
         <div className={gridCls}>
           {own.map((s) => (
-            <SkillCard key={s.root} skill={s} dirty={dirtyRoots.has(s.root)} onOpen={onOpen} />
+            <SkillCard
+              key={s.root}
+              skill={s}
+              dirty={dirtyRoots.has(s.root)}
+              deletable
+              deleting={deletingRoot === s.root}
+              onOpen={onOpen}
+              onDelete={onDelete}
+            />
           ))}
         </div>
       )}
@@ -213,7 +279,7 @@ function AgentSection({ group, dirtyRoots, onOpen }: { group: AgentSkills; dirty
           {showBundled && (
             <div className={`mt-3 ${gridCls}`}>
               {bundled.map((s) => (
-                <SkillCard key={s.root} skill={s} dirty={dirtyRoots.has(s.root)} onOpen={onOpen} />
+                <SkillCard key={s.root} skill={s} dirty={dirtyRoots.has(s.root)} onOpen={onOpen} onDelete={onDelete} />
               ))}
             </div>
           )}
@@ -331,16 +397,8 @@ export function Component() {
   const onOpen = (p: string) => navigate(studioPath(p));
   const onOpenTerminals = () => navigate("/terminals");
   const [path, setPath] = useState("");
-  const [secretsOpen, setSecretsOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-
-  useEffect(() => {
-    if (!secretsOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSecretsOpen(false);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [secretsOpen]);
 
   const [discovered, setDiscovered] = useState<AgentSkills[]>([]);
   const [discovering, setDiscovering] = useState(true);
@@ -410,6 +468,30 @@ export function Component() {
     },
     [runDiscovery],
   );
+  const doDelete = useCallback(
+    async (skill: DiscoveredSkill) => {
+      const name = skill.name ?? baseName(skill.root);
+      // Be honest about what's deleted. A project skill is a real folder inside the
+      // project repo (never a link) — say so. Otherwise it may be a synced link
+      // (only the link is removed) or a real folder.
+      const body = skill.project
+        ? `This permanently deletes the real skill folder from your “${skill.project}” project on disk. This can’t be undone.`
+        : `This permanently removes the skill folder from disk. If it’s a synced link, only the link is removed; a real folder is deleted outright. This can’t be undone.`;
+      if (!window.confirm(`Delete “${name}”?\n\n${body}`)) return;
+      setBusyRoot(skill.root);
+      setActionError(null);
+      try {
+        await api.deleteSkill(skill.root);
+        removeRecent(skill.root); // drop any stale Recent entry pointing at the deleted folder
+        await runDiscovery();
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusyRoot(null);
+      }
+    },
+    [runDiscovery],
+  );
 
   const [showPicker, setShowPicker] = useState(false);
   const browse = async () => {
@@ -459,7 +541,7 @@ export function Component() {
         </button>
         <button
           type="button"
-          onClick={() => setSecretsOpen(true)}
+          onClick={() => navigate(secretsPath())}
           title="Secrets"
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted hover:bg-panel hover:text-fg"
         >
@@ -575,6 +657,7 @@ export function Component() {
               <RefreshIcon className={discovering ? "animate-spin" : ""} />
             </button>
           </div>
+          {actionError && <p className="mb-3 text-sm text-danger">{actionError}</p>}
           {!discovering && totalFound === 0 ? (
             <p className="max-w-2xl text-sm text-muted">
               No installed skills found. Skills live under <code className="font-mono text-[0.8em]">~/.agents/skills</code>,{" "}
@@ -586,7 +669,14 @@ export function Component() {
           ) : (
             <div className="space-y-8">
               {groups.map((g) => (
-                <AgentSection key={g.agent} group={g} dirtyRoots={dirtyRoots} onOpen={onOpen} />
+                <AgentSection
+                  key={g.agent}
+                  group={g}
+                  dirtyRoots={dirtyRoots}
+                  deletingRoot={busyRoot}
+                  onOpen={onOpen}
+                  onDelete={doDelete}
+                />
               ))}
             </div>
           )}
@@ -633,31 +723,6 @@ export function Component() {
             onOpen(root);
           }}
         />
-      )}
-
-      {secretsOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setSecretsOpen(false)}>
-          <div
-            className="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-border bg-surface shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-              <KeyIcon />
-              <span className="text-sm font-semibold text-fg">Secrets</span>
-              <button
-                type="button"
-                onClick={() => setSecretsOpen(false)}
-                aria-label="Close"
-                className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
-              <SecretsManager />
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
