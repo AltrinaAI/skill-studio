@@ -274,10 +274,10 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
             const name = f.path.slice(dir.length);
             const active = f.path === selectedRel;
             return (
-              <li key={f.path} className={`group flex items-center gap-2 border-l-2 px-3 py-1 ${active ? "border-accent bg-accent-soft" : "border-transparent hover:border-accent hover:bg-surface"}`}>
+              <li key={f.path} className={`group flex items-center gap-2 border-l-2 px-3 py-1 ${active ? "border-accent hover:bg-surface" : "border-transparent hover:border-accent hover:bg-surface"}`}>
                 <button type="button" onClick={() => openChange(f)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
                   <span className="min-w-0 flex-1 truncate text-xs" title={f.origPath ? `${f.origPath} → ${f.path}` : f.path}>
-                    <span className="text-fg">{name}</span>
+                    <span className={active ? "font-medium text-fg" : "text-fg"}>{name}</span>
                     {dir && <span className="text-faint"> {dir}</span>}
                   </span>
                 </button>
