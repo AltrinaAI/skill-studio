@@ -55,10 +55,11 @@ chmod +x "$tmp"
 mv -f "$tmp" "$dir/skill-server"
 "#;
 
-/// The release version whose `skill-server` asset we install. Defaults to the running
-/// app's version (`app_version`, taken from `tauri.conf.json`, which CI stamps from
-/// the release tag); override with `SKILL_STUDIO_SERVER_VERSION`. Either way it must
-/// match a published release tag `v<version>` carrying the `skill-server-*` assets.
+/// The release version whose `skill-server` asset we prefer. Defaults to the running
+/// app's version (`app_version`, from `tauri.conf.json`, which CI stamps from the
+/// release tag); override with `SKILL_STUDIO_SERVER_VERSION`. A released build's version
+/// exact-matches its tag; an unstamped dev build sits at the placeholder `0.1.0` that
+/// was never released, so `candidate_urls` falls back to the latest release.
 pub fn server_version(app_version: &str) -> String {
     std::env::var("SKILL_STUDIO_SERVER_VERSION")
         .ok()
@@ -66,16 +67,22 @@ pub fn server_version(app_version: &str) -> String {
         .unwrap_or_else(|| app_version.to_string())
 }
 
-/// Base URL the remote downloads the binary from. Defaults to this repo's GitHub
-/// Releases; override with `SKILL_STUDIO_SERVER_BASE_URL` (no trailing slash; the
-/// asset name `skill-server-<target>` is appended).
-fn base_url(version: &str) -> String {
-    std::env::var("SKILL_STUDIO_SERVER_BASE_URL")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| {
-            format!("https://github.com/AltrinaAI/skills-studio/releases/download/v{version}")
-        })
+/// The asset URLs to try, in order: the version-pinned release first (so a released
+/// build pins the remote server to the exact version it ships, never drifting to a
+/// newer/incompatible API), then the latest release (so an unstamped dev build — or any
+/// version that was never published — still resolves to something current). Override the
+/// whole scheme with `SKILL_STUDIO_SERVER_BASE_URL` (no trailing slash; the asset name
+/// `skill-server-<target>` is appended) — when set, only that single URL is tried.
+fn candidate_urls(version: &str, target: &str) -> Vec<String> {
+    let asset = format!("skill-server-{target}");
+    if let Some(base) = std::env::var("SKILL_STUDIO_SERVER_BASE_URL").ok().filter(|v| !v.is_empty()) {
+        return vec![format!("{}/{asset}", base.trim_end_matches('/'))];
+    }
+    let releases = "https://github.com/AltrinaAI/skills-studio/releases";
+    vec![
+        format!("{releases}/download/v{version}/{asset}"),
+        format!("{releases}/latest/download/{asset}"),
+    ]
 }
 
 /// A detected remote platform — the rust target triple naming its release asset.
@@ -105,44 +112,79 @@ pub fn detect(host: &str) -> Result<Platform, String> {
     Ok(Platform { target })
 }
 
-/// Ensure the version-pinned `skill-server` is installed on the remote; returns its
-/// path (with a literal `$HOME` for the remote shell to expand). Idempotent.
+/// Ensure a runnable `skill-server` is installed on the remote; returns its path (with
+/// a literal `$HOME` for the remote shell to expand). Idempotent. Tries each candidate
+/// asset URL in turn — version-pinned first, then latest — so a 404 on the pinned URL
+/// (e.g. an unstamped dev build at `0.1.0`) transparently falls back to the latest
+/// release instead of failing the whole connect.
 pub fn ensure_installed(host: &str, platform: &Platform, app_version: &str) -> Result<String, String> {
     let version = server_version(app_version);
     let bin = format!("$HOME/.skill-studio/server/{version}/skill-server");
-    let url = format!("{}/skill-server-{}", base_url(&version), platform.target);
+    let urls = candidate_urls(&version, platform.target);
 
-    let script = INSTALL_SCRIPT.replace("__VERSION__", &version).replace("__URL__", &url);
-
-    match ssh::run(host, &script) {
-        Ok(_) => Ok(bin),
-        // Exit 3 = the remote has neither curl nor wget → download here and pipe it
-        // over the same ssh transport (works for no-internet remotes / through ProxyJump).
-        Err(e) if e.code == Some(3) => {
-            install_via_pipe(host, &version, &url)?;
-            Ok(bin)
+    let mut last = String::new();
+    for url in &urls {
+        let script = INSTALL_SCRIPT.replace("__VERSION__", &version).replace("__URL__", url);
+        match ssh::run(host, &script) {
+            Ok(_) => return Ok(bin),
+            // Exit 3 = the remote has neither curl nor wget → download here and pipe it
+            // over the same ssh transport (works for no-internet remotes / through ProxyJump).
+            Err(e) if e.code == Some(3) => {
+                install_via_pipe(host, &version, &urls)?;
+                return Ok(bin);
+            }
+            // Exit 4 = the downloaded binary didn't match the published checksum.
+            Err(e) if e.code == Some(4) => {
+                return Err(
+                    "The downloaded skill-server failed its checksum check (possible corruption or tampering). Aborted.".into(),
+                );
+            }
+            // Download failed (e.g. a 404 for a version with no published asset) — record
+            // it and fall through to the next candidate URL.
+            Err(e) => last = e.message,
         }
-        // Exit 4 = the downloaded binary didn't match the published checksum.
-        Err(e) if e.code == Some(4) => Err(
-            "The downloaded skill-server failed its checksum check (possible corruption or tampering). Aborted.".into(),
-        ),
-        Err(e) => Err(format!("Failed to install skill-server on the remote: {}", e.message)),
     }
+    Err(format!(
+        "Couldn't download skill-server for {} (app version {version}). Tried: {}. The matching \
+         release may not be published yet — set SKILL_STUDIO_SERVER_VERSION or \
+         SKILL_STUDIO_SERVER_BASE_URL to override. Last error: {last}",
+        platform.target,
+        urls.join(", ")
+    ))
 }
 
 /// No-downloader fallback: fetch the asset on THIS machine (verifying its checksum
 /// here, since the remote can't reach the network), then stream it to the remote over
-/// ssh (`cat > tmp && chmod +x && mv`).
-fn install_via_pipe(host: &str, version: &str, url: &str) -> Result<(), String> {
+/// ssh (`cat > tmp && chmod +x && mv`). Tries each candidate URL in turn, mirroring
+/// `ensure_installed`'s pinned-then-latest order.
+fn install_via_pipe(host: &str, version: &str, urls: &[String]) -> Result<(), String> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(Duration::from_secs(120))
         .build();
-    let resp = agent.get(url).call().map_err(|e| format!("Local download of {url} failed: {e}"))?;
+
+    // Download here, trying each candidate until one resolves (the pinned URL may 404).
     let mut bytes: Vec<u8> = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("Reading the downloaded binary failed: {e}"))?;
+    let mut used: Option<&str> = None;
+    let mut last = String::new();
+    for url in urls {
+        match agent.get(url).call() {
+            Ok(resp) => {
+                bytes.clear();
+                match resp.into_reader().read_to_end(&mut bytes) {
+                    Ok(_) => {
+                        used = Some(url);
+                        break;
+                    }
+                    Err(e) => last = format!("reading {url} failed: {e}"),
+                }
+            }
+            Err(e) => last = format!("{url}: {e}"),
+        }
+    }
+    let url = used.ok_or_else(|| {
+        format!("Local download of skill-server failed (tried {}). Last error: {last}", urls.join(", "))
+    })?;
 
     // Best-effort integrity check against the published `.sha256` (skip only if that
     // asset is unavailable, e.g. an older release).

@@ -24,7 +24,15 @@ async function http<T>(method: "GET" | "POST", path: string, args?: Record<strin
     body: method === "POST" ? JSON.stringify(args ?? {}) : undefined,
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((json && json.error) || `Request failed (${res.status})`);
+  if (!res.ok) {
+    // Carry the HTTP status so callers can tell an HTTP error (e.g. a 404 — route
+    // absent) from a transport failure (fetch throws *before* here, so that error has
+    // no `status`). Used by the remote store to distinguish "no remoting on this server"
+    // from "the local server is unreachable".
+    const err = new Error((json && json.error) || `Request failed (${res.status})`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
   return json as T;
 }
 

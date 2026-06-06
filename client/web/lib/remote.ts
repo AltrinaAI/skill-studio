@@ -18,8 +18,10 @@ const CONNECTING: ReadonlySet<api.RemoteState> = new Set([
 
 export interface RemoteSnapshot {
   status: api.RemoteStatus;
-  /** Whether this server exposes remoting (false on browser dev / the remote binary,
-   *  where `/api/remote/*` 404s) — the pill hides itself when false. */
+  /** Whether the remote control is shown. False ONLY when the server explicitly has no
+   *  remoting (`/api/remote/*` 404s — a network-exposed server / the remote binary).
+   *  A transport error (the local server is down/unreachable) keeps this true, so the
+   *  connect dialog stays reachable and we recover when the server returns. */
   available: boolean;
 }
 
@@ -51,11 +53,16 @@ export async function refresh(): Promise<void> {
   let status: api.RemoteStatus;
   try {
     status = await api.remoteStatus();
-  } catch {
-    // No remoting on this server (404) or a transient error — present as Local.
-    setPoll(0);
+  } catch (e) {
+    // A true 404 means this server has no remoting (network-exposed server / the remote
+    // binary) → hide the control for good. Any other failure — a transport error (the
+    // local server is down/unreachable, so `fetch` threw with no `status`) or a 5xx —
+    // keeps the control visible so the user can still open the connect dialog, and we
+    // keep polling slowly to recover once the server returns.
+    const noRemoting = (e as { status?: number } | undefined)?.status === 404;
+    setPoll(noRemoting ? 0 : 5000);
     pendingConnect = false;
-    update({ status: { state: "idle" }, available: false });
+    update({ status: { state: "idle" }, available: !noRemoting });
     if (prev === "connected") window.location.reload();
     return;
   }
