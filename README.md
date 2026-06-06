@@ -18,24 +18,19 @@ box you drive from a browser (the VS Code-remote model — see [`design.md`](./d
 - **Discover** every skill on your machine — across Claude Code, Codex, Cursor,
   Gemini CLI, OpenClaw, the shared `~/.agents/skills` standard, and project repos
   — classified personal / official / plugin.
-- **Read & validate** `SKILL.md` against the spec (frontmatter badges, GFM body,
-  name/description/compatibility/metadata checks, file-reference checks) with a
-  full file-tree browser.
-- **Edit in place** — frontmatter form + CodeMirror body editor with live
-  preview; double-click to toggle render/edit; autosave, scoped to the folder.
-- **Version like code** — a VS Code-style Source Control panel per skill: start
-  tracking, working-tree changes, inline diffs, discard, numbered commit history,
-  parent-repo aware.
-- **Draft commit messages on-device** — a managed `llama-server` (llama.cpp)
-  running Qwen3-0.6B; nothing leaves the machine.
-- **Create / import / export / sync / delete** — scaffold a new skill, import a
-  folder or `.zip`, export a `.zip` (optionally bundling secrets), or share into a
-  shared dir by copy or symlink.
+- **A Notion-like UI/UX for your agent skills** — `SKILL.md` rendered as a clean
+  document with frontmatter badges, a GFM body, and a full file-tree browser;
+  double-click to toggle render/edit, with a frontmatter form, CodeMirror body
+  editor, live preview, and autosave scoped to the folder.
+- **Automatic versioning** — a VS Code-style Source Control panel per skill:
+  working-tree changes, inline diffs, discard, and numbered commit history,
+  parent-repo aware. Commit messages are drafted locally by the on-device 2B
+  Qwen model — nothing leaves the machine.
 - **Secrets manager** — one machine-local store, loaded into agent environments
   by the bundled `skill-studio` activation skill.
-- **App-managed terminals** — run Claude Code, Codex, or a shell in tmux-backed
-  sessions that survive UI disconnect, so you can close the lid and let the agent
-  keep going.
+- **Run long-lived agents on remote machines** — start Claude Code, Codex, or a
+  shell in tmux-backed sessions that survive UI disconnect, so you can close your
+  laptop and come back to it later.
 
 ## Run it
 
@@ -48,7 +43,6 @@ npm run dev          # native desktop
 |------|---------|------|
 | Native desktop | `npm run dev` | the app window |
 | Browser, local backend | `cargo run -p skill-server` + `npm run dev:vite` | `localhost:1420` |
-| Browser, remote backend | `skill-server` on the host; `VITE_API_TARGET=http://<host>:8765 npm run dev:vite` | `localhost:1420` |
 | Production | `npm run build`, then run `skill-server` | skill-server's port |
 
 Open a skill via the discovered list, the top-bar path input, **Browse…**, or a
@@ -65,10 +59,8 @@ first-class human UX. Next:
 1. **Skill Mining** — a local agent that mines past conversations to propose the
    skills that would have helped, and flags stale ones (the Proposed-skills /
    `generated-skills/` staging is already in place for it).
-2. **Full SSH support** from your local config — drive agents on a remote box via
-   the Terminal and close your laptop.
-3. **Version-controlled team collaboration & team secret managers.**
-4. **Multi-modal skills / SOP documents** in a readable format.
+2. **Version-controlled team collaboration & team secret managers.**
+3. **Multi-modal skills / SOP documents** in a readable format.
 
 ## Notes
 
