@@ -20,7 +20,9 @@ on:
         required: true
 
 permissions:
-  contents: read
+  # Draft releases are invisible to the default read token, and the build workflow
+  # keeps release candidates draft until they are manually published.
+  contents: write
 
 jobs:
   smoke:
