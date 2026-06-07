@@ -1,23 +1,17 @@
-# Cargo workspace. client/desktop is the Tauri shell; server/{skill-core,
-# skill-term,skill-server} is the backend it runs in-process (and that also runs
-# standalone on a remote host). See design.md.
+# Server Cargo workspace. The Tauri shell is intentionally excluded so standalone
+# skill-server releases don't resolve desktop dependencies. See design.md.
 [workspace]
-members = ["client/desktop", "server/skill-core", "server/skill-server", "server/skill-term"]
+members = ["server/skill-core", "server/skill-server", "server/skill-term"]
+exclude = ["client/desktop"]
 resolver = "2"
 
-# THE single source of truth for the version across the whole repo. Every crate sets
-# `version.workspace = true`, and the desktop app (whose tauri.conf.json has no
-# `version`) plus the standalone skill-server both read it via CARGO_PKG_VERSION. The
-# committed value is a dev placeholder — real versions come from the pushed git tag,
-# which CI stamps in right here (see .github/workflows/release.yml). `0.0.0` ⇒
-# "unreleased", so remote-install falls back to the latest release asset (see
-# server/skill-server/src/sshmgr/provision.rs).
+# Server version source. scripts/stamp-version.sh keeps this and the desktop package
+# version in sync for release tags.
 [workspace.package]
 version = "0.0.0"
 
 [profile.release]
 panic = "abort"
-codegen-units = 1
-lto = true
+lto = "thin"
 opt-level = "s"
 strip = true

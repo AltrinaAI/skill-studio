@@ -128,10 +128,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/fetch-cuda-backend.sh
 
-      # Stamp the release version (the pushed tag, minus the leading `v`) into the ONE
-      # source of truth — [workspace.package].version in the root Cargo.toml — so every
-      # crate, the Tauri app/bundle names (tauri.conf.json has no `version`, so it reads
-      # CARGO_PKG_VERSION), and the standalone skill-server all build at the tag version.
+      # Stamp the release version (the pushed tag, minus the leading `v`) into the
+      # server workspace and desktop package so both binaries build at the tag version.
       # Skipped on manual runs (workflow_dispatch has no tag), which then build the
       # committed 0.0.0 dev placeholder as-is.
       - name: Sync version from tag
@@ -242,7 +240,9 @@ jobs:
       # Builds ONLY skill-server (+ skill-core/skill-term) — no tauri/webkit deps, so
       # the static musl link is clean and fast.
       - name: Build skill-server
-        run: cargo build --release -p skill-server --bin skill-server --target ${{ matrix.target }}
+        env:
+          CARGO_NET_RETRY: 10
+        run: cargo build --release -p skill-server --bin skill-server --target ${{ matrix.target }} --locked
 
       - name: Package + checksum
         shell: bash

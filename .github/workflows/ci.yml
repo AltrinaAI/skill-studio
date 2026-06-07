@@ -94,4 +94,5 @@ jobs:
       - name: Stub the engine resource dir
         run: mkdir -p client/desktop/binaries && touch client/desktop/binaries/.keep
       - name: cargo check (desktop shell)
-        run: cargo check -p skill-studio
+        working-directory: client/desktop
+        run: cargo check --locked

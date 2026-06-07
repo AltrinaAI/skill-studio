@@ -1,6 +1,6 @@
 [package]
 name = "skill-studio"
-version.workspace = true
+version = "0.0.0"
 description = "View and edit Agent Skills"
 authors = ["General Agency"]
 edition = "2021"
@@ -23,3 +23,9 @@ skill-server = { path = "../../server/skill-server" }
 # Logging facade for the shell's own diagnostics; the subscriber comes from
 # `skill_server::init_logging()`, so no `env_logger` dependency is needed here.
 log = "0.4"
+
+[profile.release]
+panic = "abort"
+lto = "thin"
+opt-level = "s"
+strip = true
