@@ -230,12 +230,15 @@ jobs:
         with:
           workspaces: ". -> target"
 
-      # Stamp the same single source so the standalone binary's `--version` matches the
+      # Stamp the server workspace so the standalone binary's `--version` matches the
       # release it ships in (this job checks out fresh, so it must stamp too).
       - name: Sync version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: bash scripts/stamp-version.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Refresh stamped server lockfile
+        run: cargo update -w --offline
 
       # Builds ONLY skill-server (+ skill-core/skill-term) — no tauri/webkit deps, so
       # the static musl link is clean and fast.
