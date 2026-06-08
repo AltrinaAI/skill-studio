@@ -1,14 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Spinner } from "@/components/ui";
+import { Modal } from "@/components/Modal";
+import { btnGhost, btnPrimary, Spinner } from "@/components/ui";
 import * as api from "@/lib/api";
 import { useRemote } from "@/lib/remote";
-
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
-const btnGhost =
-  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
 const CONNECTING = new Set<api.RemoteState>(["detecting", "installing", "launching", "forwarding"]);
 
@@ -79,11 +75,6 @@ function RemoteDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     api.remoteList().then(setHosts).catch(() => setHosts([]));
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
   // Surface a backend connect failure inside the dialog.
   useEffect(() => {
     if (status.state === "error" && status.message) setError(status.message);
@@ -124,19 +115,7 @@ function RemoteDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <ServerIcon />
-          <span className="text-sm font-semibold text-fg">Remote host</span>
-          <button type="button" onClick={onClose} aria-label="Close" className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg">
-            ✕
-          </button>
-        </div>
-
+    <Modal title="Remote host" titleLeading={<ServerIcon />} onClose={onClose}>
         <div className="space-y-4 px-5 py-4">
           {connected ? (
             <>
@@ -229,7 +208,6 @@ function RemoteDialog({ onClose }: { onClose: () => void }) {
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

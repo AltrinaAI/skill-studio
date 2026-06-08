@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { PreviewBadge, Spinner } from "@/components/ui";
 import { agentColor, KIND_TAG, type SkillKind } from "@/lib/agents";
+import { useConfirm } from "@/components/useConfirm";
 import * as api from "@/lib/api";
 import type { SyncTarget } from "@/lib/api";
 import { secretsPath } from "@/lib/routes";
@@ -29,6 +30,7 @@ function SyncSection({ root }: { root: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [link, setLink] = useState(false); // copy by default; link = one shared copy
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const confirm = useConfirm();
 
   const refresh = useCallback(() => {
     api
@@ -41,7 +43,16 @@ function SyncSection({ root }: { root: string }) {
   }, [refresh]);
 
   const doSync = async (t: SyncTarget, overwrite: boolean) => {
-    if (overwrite && !window.confirm(`Replace the existing copy in “${t.label}” with this version?`)) return;
+    if (
+      overwrite &&
+      !(await confirm({
+        title: "Replace existing copy?",
+        body: `Replace the existing copy in “${t.label}” with this version?`,
+        confirmLabel: "Replace",
+        danger: true,
+      }))
+    )
+      return;
     setBusy(t.id);
     setMsg(null);
     try {
@@ -138,13 +149,21 @@ function DeleteSection({
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const confirm = useConfirm();
 
   const doDelete = async () => {
     const lead =
       kind === "personal"
         ? `Delete “${dirName}”?`
         : `“${dirName}” is a ${KIND_TAG[kind].label.toLowerCase()} skill. Delete it anyway?`;
-    if (!window.confirm(`${lead}\n\nThis permanently removes the skill folder from disk. A synced link is just unlinked; the original isn't touched.`)) {
+    if (
+      !(await confirm({
+        title: lead,
+        body: "This permanently removes the skill folder from disk. A synced link is just unlinked; the original isn't touched.",
+        confirmLabel: "Delete",
+        danger: true,
+      }))
+    ) {
       return;
     }
     setBusy(true);

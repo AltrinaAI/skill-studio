@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Spinner } from "@/components/ui";
 import { agentColor } from "@/lib/agents";
+import { useConfirm } from "@/components/useConfirm";
 import * as api from "@/lib/api";
 import type { SecretEntry, SecretsStatus } from "@/lib/api";
 
@@ -38,6 +39,7 @@ export default function LocalStoreCard() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const confirm = useConfirm();
 
   const refresh = useCallback(async () => {
     const [st, ls] = await Promise.all([
@@ -69,7 +71,15 @@ export default function LocalStoreCard() {
   };
 
   const remove = async (key: string) => {
-    if (!window.confirm(`Delete ${key}? Skills using it will lose access.`)) return;
+    if (
+      !(await confirm({
+        title: `Delete ${key}?`,
+        body: "Skills using it will lose access.",
+        confirmLabel: "Delete",
+        danger: true,
+      }))
+    )
+      return;
     setBusy(true);
     setErr(null);
     setNote(null);

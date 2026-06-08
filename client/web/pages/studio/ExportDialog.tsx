@@ -1,14 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Spinner } from "@/components/ui";
+import { Modal } from "@/components/Modal";
+import { btnGhost, btnPrimary, Spinner } from "@/components/ui";
 import * as api from "@/lib/api";
 import type { SecretEntry } from "@/lib/api";
-
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
-const btnGhost =
-  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
 /**
  * Export confirmation for a skill that declares required env vars. Lets the user
@@ -37,12 +33,6 @@ export default function ExportDialog({
       .then((ls: SecretEntry[]) => setStored(new Set(ls.map((s) => s.key))))
       .catch(() => setStored(new Set<string>()));
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const present = useMemo(() => (stored ? declared.filter((k) => stored.has(k)) : []), [stored, declared]);
   const missing = useMemo(() => (stored ? declared.filter((k) => !stored.has(k)) : []), [stored, declared]);
 
@@ -61,19 +51,11 @@ export default function ExportDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <span className="text-sm font-semibold text-fg">Export skill</span>
-          <span className="truncate font-mono text-xs text-faint">{dirName}.zip</span>
-          <button type="button" onClick={onClose} aria-label="Close" className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg">
-            ✕
-          </button>
-        </div>
-
+    <Modal
+      title="Export skill"
+      titleAside={<span className="truncate font-mono text-xs text-faint">{dirName}.zip</span>}
+      onClose={onClose}
+    >
         <div className="space-y-4 px-5 py-4">
           {stored === null ? (
             <p className="flex items-center gap-2 text-sm text-muted">
@@ -159,7 +141,6 @@ export default function ExportDialog({
             {busy ? "Exporting…" : "Export .zip"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

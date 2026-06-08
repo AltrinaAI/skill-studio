@@ -1,15 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Spinner } from "@/components/ui";
+import { Modal } from "@/components/Modal";
+import { btnDanger, btnGhost, btnPrimary, Spinner } from "@/components/ui";
 import FolderPicker from "@/components/FolderPicker";
 import * as api from "@/lib/api";
 import type { ImportResult, SkillHome } from "@/lib/api";
-
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
-const btnGhost =
-  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
 /** Re-runnable import attempt (so a name conflict can retry with overwrite=true). */
 type Run = (overwrite: boolean) => Promise<ImportResult>;
@@ -65,12 +61,6 @@ export default function ImportSkillDialog({
       })
       .catch(() => setHomes([]));
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const home = useMemo(() => homes?.find((h) => h.id === target), [homes, target]);
 
   const done = (res: ImportResult) => onImported(res.root);
@@ -121,23 +111,8 @@ export default function ImportSkillDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <span className="text-sm font-semibold text-fg">Import skill</span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg"
-          >
-            ✕
-          </button>
-        </div>
-
+    <>
+      <Modal title="Import skill" onClose={onClose}>
         <div className="space-y-4 px-5 py-4">
           {/* Location is chosen first so every source lands in the same home. */}
           <div>
@@ -231,11 +206,7 @@ export default function ImportSkillDialog({
                     <button type="button" onClick={() => setPhase({ t: "choose" })} className={btnGhost}>
                       Cancel
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void attempt(phase.run, true)}
-                      className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
-                    >
+                    <button type="button" onClick={() => void attempt(phase.run, true)} className={btnDanger}>
                       Overwrite
                     </button>
                   </div>
@@ -245,7 +216,7 @@ export default function ImportSkillDialog({
             </>
           )}
         </div>
-      </div>
+      </Modal>
 
       {pickerOpen && (
         <FolderPicker
@@ -256,7 +227,7 @@ export default function ImportSkillDialog({
           onClose={() => setPickerOpen(false)}
         />
       )}
-    </div>
+    </>
   );
 }
 

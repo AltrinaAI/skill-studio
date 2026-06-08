@@ -1,15 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Spinner } from "@/components/ui";
+import { Modal } from "@/components/Modal";
+import { btnGhost, btnPrimary, Spinner } from "@/components/ui";
 import { NAME_REGEX, LIMITS } from "@/lib/skill";
 import * as api from "@/lib/api";
 import type { SkillHome } from "@/lib/api";
-
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
-const btnGhost =
-  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
 /**
  * Scaffold a brand-new skill: pick a name, description and location, and we
@@ -42,12 +38,6 @@ export default function NewSkillDialog({
       })
       .catch(() => setHomes([]));
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const home = useMemo(() => homes?.find((h) => h.id === target), [homes, target]);
   const nameValid = NAME_REGEX.test(name) && name.length <= LIMITS.nameMax;
   const descValid = description.trim().length > 0;
@@ -67,23 +57,7 @@ export default function NewSkillDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <span className="text-sm font-semibold text-fg">New skill</span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg"
-          >
-            ✕
-          </button>
-        </div>
-
+    <Modal title="New skill" onClose={onClose}>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -158,7 +132,6 @@ export default function NewSkillDialog({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

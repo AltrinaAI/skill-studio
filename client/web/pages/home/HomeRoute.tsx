@@ -7,6 +7,7 @@ import { FolderIcon } from "@/components/FileIcon";
 import FolderPicker from "@/components/FolderPicker";
 import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillDialog from "./ImportSkillDialog";
+import { useConfirm } from "@/components/useConfirm";
 import { useRecents, removeRecent } from "@/lib/recents";
 import { agentColor, kindMeta, KIND_TAG, AGENT_GROUP_INFO } from "@/lib/agents";
 import * as api from "@/lib/api";
@@ -386,6 +387,7 @@ export function Component() {
   const [dirtyRoots, setDirtyRoots] = useState<Set<string>>(new Set());
   const [busyRoot, setBusyRoot] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const confirm = useConfirm();
   // Bumped on every scan; a slower in-flight scan (or its background dirty fetch)
   // checks this before committing state so it can't clobber a newer scan's results.
   const discoveryEpoch = useRef(0);
@@ -435,7 +437,15 @@ export function Component() {
   );
   const discardProposed = useCallback(
     async (root: string, name: string) => {
-      if (!window.confirm(`Discard the proposed skill “${name}”?\n\nThis permanently deletes ${root}.`)) return;
+      if (
+        !(await confirm({
+          title: `Discard “${name}”?`,
+          body: `This permanently deletes ${root}.`,
+          confirmLabel: "Discard",
+          danger: true,
+        }))
+      )
+        return;
       setBusyRoot(root);
       setActionError(null);
       try {
@@ -447,7 +457,7 @@ export function Component() {
         setBusyRoot(null);
       }
     },
-    [runDiscovery],
+    [runDiscovery, confirm],
   );
   const doDelete = useCallback(
     async (skill: DiscoveredSkill) => {
@@ -458,7 +468,7 @@ export function Component() {
       const body = skill.project
         ? `This permanently deletes the real skill folder from your “${skill.project}” project on disk. This can’t be undone.`
         : `This permanently removes the skill folder from disk. If it’s a synced link, only the link is removed; a real folder is deleted outright. This can’t be undone.`;
-      if (!window.confirm(`Delete “${name}”?\n\n${body}`)) return;
+      if (!(await confirm({ title: `Delete “${name}”?`, body, confirmLabel: "Delete", danger: true }))) return;
       setBusyRoot(skill.root);
       setActionError(null);
       try {
@@ -471,7 +481,7 @@ export function Component() {
         setBusyRoot(null);
       }
     },
-    [runDiscovery],
+    [runDiscovery, confirm],
   );
 
   const [showPicker, setShowPicker] = useState(false);

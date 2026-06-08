@@ -5,6 +5,7 @@ import { useLocation, useMatch, useNavigate, useSearchParams } from "react-route
 import { Spinner } from "@/components/ui";
 import { skillKind, KIND_TAG } from "@/lib/agents";
 import { useEditorStatus } from "@/lib/editorState";
+import { useConfirm } from "@/components/useConfirm";
 import { useStudio } from "./StudioContext";
 import SaveVersionDialog from "./SaveVersionDialog";
 import { studioPath, studioFilePath, studioCommitPath } from "@/lib/routes";
@@ -34,6 +35,7 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
   const location = useLocation();
   const [, setSearchParams] = useSearchParams();
   const { reload, gitVersion, bumpGit, preview, enterVersion, keepVersion } = useStudio();
+  const confirm = useConfirm();
   const kind = skillKind(root).kind;
 
   // The version being previewed stays highlighted in the list. The open file
@@ -146,7 +148,15 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
 
   const discard = async (f: GitFileChange) => {
     if (busy) return;
-    if (!window.confirm(`Discard changes to “${f.path}”? This can’t be undone.`)) return;
+    if (
+      !(await confirm({
+        title: "Discard changes?",
+        body: `Discard changes to “${f.path}”. This can’t be undone.`,
+        confirmLabel: "Discard",
+        danger: true,
+      }))
+    )
+      return;
     setBusy(true);
     setActionErr(null);
     try {
@@ -162,7 +172,15 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
 
   const discardAll = async () => {
     if (busy) return;
-    if (!window.confirm("Discard ALL changes since the last commit? This can’t be undone.")) return;
+    if (
+      !(await confirm({
+        title: "Discard all changes?",
+        body: "Discard ALL changes since the last commit. This can’t be undone.",
+        confirmLabel: "Discard all",
+        danger: true,
+      }))
+    )
+      return;
     setBusy(true);
     setActionErr(null);
     try {

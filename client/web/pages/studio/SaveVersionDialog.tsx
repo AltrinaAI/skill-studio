@@ -1,12 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Modal } from "@/components/Modal";
+import { btnGhost, btnPrimary } from "@/components/ui";
 import * as api from "@/lib/api";
-
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
-const btnGhost =
-  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
 /**
  * "Save a version" — names the current state as a checkpoint (a git commit under
@@ -104,12 +101,6 @@ export default function SaveVersionDialog({
       cancelled = true;
     };
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !saving && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, saving]);
-
   const canSubmit = !knownNoIdentity && !!message.trim() && !saving;
   const submit = async () => {
     if (!canSubmit) return;
@@ -117,24 +108,13 @@ export default function SaveVersionDialog({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={() => {
-        if (!saving) onClose(); // don't dismiss mid-save (re-exposes the version list)
-      }}
+    // Don't dismiss mid-save (re-exposes the version list).
+    <Modal
+      title="Save a new version"
+      titleAside={<span className="truncate font-mono text-xs text-faint">{dirName}</span>}
+      onClose={onClose}
+      dismissDisabled={saving}
     >
-      <div
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <span className="text-sm font-semibold text-fg">Save a new version</span>
-          <span className="truncate font-mono text-xs text-faint">{dirName}</span>
-          <button type="button" onClick={onClose} disabled={saving} aria-label="Close" className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg disabled:opacity-40">
-            ✕
-          </button>
-        </div>
-
         <div className="space-y-3 px-5 py-4">
           <textarea
             ref={taRef}
@@ -190,7 +170,6 @@ export default function SaveVersionDialog({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

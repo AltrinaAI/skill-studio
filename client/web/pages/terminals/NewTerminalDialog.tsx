@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Spinner } from "@/components/ui";
+import { Modal } from "@/components/Modal";
+import { btnGhost, btnPrimary, Spinner } from "@/components/ui";
 import FolderPicker from "@/components/FolderPicker";
 import * as api from "@/lib/api";
 import type { AgentOption } from "@/lib/api";
 import { loadTerminalPrefs, saveTerminalPrefs } from "@/lib/terminalPrefs";
-
-const btnPrimary =
-  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
-const btnGhost =
-  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
 
 function optionLabel(a: AgentOption): string {
   if (a.agent === "shell") return "Shell (bash)";
@@ -83,12 +79,6 @@ export default function NewTerminalDialog({
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Couldn't list agents."));
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   // Restore the agent's last-used config when it's selected (incl. the initial
   // default); falls back to an empty form for agents never launched before.
   useEffect(() => {
@@ -132,23 +122,8 @@ export default function NewTerminalDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <span className="text-sm font-semibold text-fg">New terminal</span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="ml-auto rounded-md p-1 text-faint hover:bg-panel hover:text-fg"
-          >
-            ✕
-          </button>
-        </div>
-
+    <>
+      <Modal title="New terminal" onClose={onClose}>
         <div className="space-y-4 px-5 py-4">
           {/* Agent */}
           <div>
@@ -267,7 +242,7 @@ export default function NewTerminalDialog({
             </button>
           </div>
         </div>
-      </div>
+      </Modal>
 
       {pickerOpen && (
         <FolderPicker
@@ -278,6 +253,6 @@ export default function NewTerminalDialog({
           onClose={() => setPickerOpen(false)}
         />
       )}
-    </div>
+    </>
   );
 }

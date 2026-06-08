@@ -2,6 +2,15 @@
 
 import type { ReactNode } from "react";
 
+/** Shared dialog/action button styles, previously copy-pasted into every dialog.
+ *  primary = filled, ghost = outlined, danger = filled red (destructive confirms). */
+export const btnPrimary =
+  "rounded-md bg-fg px-3 py-1.5 text-sm font-medium text-app transition-opacity hover:opacity-90 disabled:opacity-40";
+export const btnGhost =
+  "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
+export const btnDanger =
+  "rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40";
+
 export type Tone = "default" | "accent" | "ok" | "warn" | "danger" | "info" | "muted";
 
 const TONE_CLASSES: Record<Tone, string> = {

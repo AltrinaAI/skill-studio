@@ -100,14 +100,6 @@ export function hasSaveError(): boolean {
   return status.present && status.error != null;
 }
 
-/** Guard for navigation away from an editor whose last autosave failed (so the
- *  un-persisted edit would be lost). Clean/saving edits never prompt — autosave
- *  flushes them on unmount. */
-export function confirmLeaveUnsaved(): boolean {
-  if (!hasSaveError()) return true;
-  return window.confirm("Your last change couldn’t be saved and will be lost. Leave anyway?");
-}
-
 /** Imperative read of whether the active editor has unsaved edits right now —
  *  e.g. to avoid remounting it (and dropping keystrokes) during async work. */
 export function isEditorDirty(): boolean {

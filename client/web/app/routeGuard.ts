@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useBlocker } from "react-router-dom";
-import { confirmLeaveUnsaved, consumeDiscardBypass, hasSaveError } from "@/lib/editorState";
+import { useConfirm } from "@/components/useConfirm";
+import { consumeDiscardBypass, hasSaveError } from "@/lib/editorState";
 
 /**
  * App-wide guard for the rare case where an autosave FAILED — navigating away
@@ -13,13 +14,29 @@ import { confirmLeaveUnsaved, consumeDiscardBypass, hasSaveError } from "@/lib/e
  * depending on the app layer.
  */
 export function useDiscardBlocker() {
+  const confirm = useConfirm();
   const blocker = useBlocker(() => {
     if (consumeDiscardBypass()) return false;
     return hasSaveError();
   });
   useEffect(() => {
     if (blocker.state !== "blocked") return;
-    if (confirmLeaveUnsaved()) blocker.proceed();
-    else blocker.reset();
-  }, [blocker]);
+    // The blocker only blocks when an autosave failed, so by here the edit really
+    // would be lost — ask, holding the navigation until the user answers.
+    let active = true;
+    void (async () => {
+      const leave = await confirm({
+        title: "Leave without saving?",
+        body: "Your last change couldn’t be saved and will be lost.",
+        confirmLabel: "Leave",
+        danger: true,
+      });
+      if (!active) return;
+      if (leave) blocker.proceed();
+      else blocker.reset();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [blocker, confirm]);
 }
