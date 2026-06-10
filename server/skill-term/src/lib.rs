@@ -395,13 +395,24 @@ pub fn create_session(
         .collect::<Vec<_>>()
         .join(" ");
 
+    // Source the managed-secrets env file (the same one the `skill-studio`
+    // activation skill reads) before the agent starts, so skills that need
+    // credentials find them in the environment without an activation step.
+    // The `[ -f ]` guard makes a missing/empty store a silent no-op.
+    let env_source = skill_core::secrets::env_path()
+        .map(|p| {
+            let q = shell_quote(&p.to_string_lossy());
+            format!("[ -f {q} ] && . {q}; ")
+        })
+        .unwrap_or_default();
+
     // `; exec bash -l` keeps the pane (and the agent's scrollback) alive after
     // the agent exits, so a finished run stays reviewable from any client —
     // the GC only collects it once it's been idle for a week (see sweep_stale).
     let line = if agent_cmd.is_empty() {
-        "exec bash -l".to_string()
+        format!("{env_source}exec bash -l")
     } else {
-        format!("{agent_cmd}; exec bash -l")
+        format!("{env_source}{agent_cmd}; exec bash -l")
     };
 
     let cols_s = cols.max(2).to_string();

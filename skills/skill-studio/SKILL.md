@@ -1,13 +1,16 @@
 ---
 name: skill-studio
-description: Use this skill to load the secrets you manage in Skill Studio (for example OPENAI_API_KEY, GITHUB_TOKEN) into your environment. Run it once at the start of a task whenever another skill or command needs credentials, or reports a missing API key, token, or environment variable.
+description: Fallback for missing credentials — loads the secrets managed in Skill Studio (for example OPENAI_API_KEY, GITHUB_TOKEN) into your environment. Only use this after a skill or command actually fails with a missing API key, token, or environment variable; environments launched from Skill Studio already have these secrets loaded, so don't run it preemptively.
 ---
 
-# Skill Studio — activate secrets
+# Skill Studio — activate secrets (fallback)
 
 Skill Studio keeps your API keys and secrets in one place and renders them to a
-single env file. This skill loads them into the environment so the tools you run
-can see them.
+single env file. Terminals launched from Skill Studio source that file
+automatically, so the secrets are normally **already in your environment** —
+check first (e.g. `[ -n "$OPENAI_API_KEY" ]`). Reach for this skill only as a
+last resort, when a command has actually failed because a key, token, or
+environment variable is missing.
 
 ## Load the secrets
 

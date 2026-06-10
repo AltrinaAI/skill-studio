@@ -26,8 +26,11 @@ box you drive from a browser (the VS Code-remote model — see [`design.md`](./d
   working-tree changes, inline diffs, discard, and numbered commit history,
   parent-repo aware. Commit messages are drafted locally by the on-device 2B
   Qwen model — nothing leaves the machine.
-- **Secrets manager** — one machine-local store, loaded into agent environments
-  by the bundled `skill-studio` activation skill.
+- **Secrets manager** — one machine-local store. Terminals launched from the
+  app inject the secrets into the agent's environment automatically; skills
+  declare what they need (`metadata.required-env`, auto-detected on save) so
+  exports can offer to bundle them and imports can show what's missing. The
+  bundled `skill-studio` activation skill covers agents started elsewhere.
 - **Run long-lived agents on remote machines** — start Claude Code, Codex, or a
   shell in tmux-backed sessions that survive UI disconnect, so you can close your
   laptop and come back to it later.

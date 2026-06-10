@@ -12,9 +12,9 @@
 // stays reachable via the reflog).
 //
 // Secrets safety: local version commits run `git add -A`, so `.env` files can
-// end up in history. Connecting/syncing is blocked while any `.env*` exists in
-// the repo's history, and connecting seeds a `.gitignore` so it can't happen
-// later.
+// end up in history. A published repo's history is shared, so connecting/syncing
+// is blocked while any `.env*` exists in the repo's history (the `env_in_history`
+// guard) — we refuse rather than upload a secret.
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -180,27 +180,6 @@ fn env_history_error(verb: &str) -> String {
     )
 }
 
-/// Seed a `.gitignore` that keeps `.env*` out of version history, committed on
-/// its own so future `git add -A` saves can't capture secrets. No-op when a
-/// .gitignore already exists or there's no identity to commit with (the
-/// history guard still protects sharing either way).
-pub(crate) fn ensure_gitignore(root: &Path) {
-    let path = root.join(".gitignore");
-    if path.exists() {
-        return;
-    }
-    let has_identity = gitops::git_ok(root, &["config", "user.email"]).map(|s| !s.is_empty()).unwrap_or(false);
-    if !has_identity {
-        return;
-    }
-    let body = "# Keep machine-local secrets out of version history (Skill Studio).\n.env\n.env.*\n";
-    if std::fs::write(&path, body).is_err() {
-        return;
-    }
-    let _ = gitops::git(root, &["add", ".gitignore"]);
-    let _ = gitops::git(root, &["commit", "-m", "Ignore local secrets (.env)", "--", ".gitignore"]);
-}
-
 /// Common gates for every remote operation: the skill must be its own repo,
 /// on a branch (not mid version-preview), with at least one version saved.
 /// Returns (root, branch).
@@ -363,7 +342,6 @@ pub fn connect_remote(root: &str, url: &str, token: Option<&str>) -> Result<Sync
     if env_in_history(&root_path)? {
         return Err(env_history_error("connecting"));
     }
-    ensure_gitignore(&root_path);
     let add = gitops::git(&root_path, &["remote", "add", "origin", url])?;
     if !add.status.success() {
         return Err(String::from_utf8_lossy(&add.stderr).trim().to_string());
@@ -565,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn env_history_guard_and_gitignore_seed() {
+    fn env_history_guard() {
         if !gitops::git_available() {
             return;
         }
@@ -574,17 +552,6 @@ mod tests {
         let root = make_skill_repo(&base, "skill");
         commit_all(&root, "v1");
         assert!(!env_in_history(&root).unwrap());
-
-        // Seeding: creates + commits .gitignore once, then no-ops.
-        ensure_gitignore(&root);
-        let gi = std::fs::read_to_string(root.join(".gitignore")).unwrap();
-        assert!(gi.contains(".env"));
-        let count = |r: &Path| {
-            gitops::git_ok(r, &["rev-list", "--count", "HEAD"]).unwrap().parse::<usize>().unwrap()
-        };
-        let after_seed = count(&root);
-        ensure_gitignore(&root);
-        assert_eq!(count(&root), after_seed, "second seed is a no-op");
 
         // A committed .env anywhere in history trips the guard — and blocks sync.
         std::fs::write(root.join(".env"), "SECRET=1").unwrap();
@@ -619,7 +586,7 @@ mod tests {
         assert!(gitops::git(&base, &["init", "--bare", "-b", "main", "empty.git"]).unwrap().status.success());
         let empty = base.join("empty.git");
         let r = connect_remote(a_root, empty.to_str().unwrap(), None).unwrap();
-        // v1 + the seeded .gitignore commit both go up.
+        // v1 goes up — connect = push to an empty remote.
         assert_eq!((r.action.as_str(), r.pulled), ("pushed", 0));
         assert!(r.pushed >= 1);
         assert!(origin_url(&a).is_some());

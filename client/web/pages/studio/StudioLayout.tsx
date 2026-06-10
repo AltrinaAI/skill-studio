@@ -4,7 +4,8 @@ import { ReviewToggleContext } from "@/components/reviewContext";
 import { skillKind } from "@/lib/agents";
 import { requiredEnv } from "@/lib/skill";
 import * as api from "@/lib/api";
-import { armDiscardBypass } from "@/lib/editorState";
+import { useConfirm } from "@/components/useConfirm";
+import { armDiscardBypass, holdAutosave, releaseAutosave } from "@/lib/editorState";
 import TopBar from "./TopBar";
 import Sidebar from "./Sidebar";
 import PreviewBanner from "./PreviewBanner";
@@ -24,6 +25,7 @@ import { studioFilePath, studioPath } from "@/lib/routes";
 export default function StudioLayout() {
   const { data, reload } = useStudio();
   const navigate = useNavigate();
+  const confirm = useConfirm();
 
   // GitHub-connected skills treat the remote as the source of truth: on open,
   // quietly fast-forward to it in the background (the server no-ops fast when
@@ -78,6 +80,50 @@ export default function StudioLayout() {
     navigate(rel === "SKILL.md" ? studioPath(data.root) : studioFilePath(data.root, rel));
   };
 
+  // Delete a file or folder from the file tree. Destructive, so it's confirmed.
+  // When the open file is the target (or sits inside a deleted folder) we must
+  // stop its mounted editor from flushing its dying buffer back to disk and
+  // recreating the file — hold autosave across the delete + the drop back to
+  // SKILL.md (same guard the version-preview transitions use), then refresh the
+  // tree. A tracked file's deletion lands as a pending change (recoverable via
+  // version history); an untracked one is gone for good.
+  const onDelete = async (rel: string, isDir: boolean) => {
+    const name = rel.split("/").pop() ?? rel;
+    if (
+      !(await confirm({
+        title: isDir ? `Delete folder “${name}”?` : `Delete “${name}”?`,
+        body: isDir
+          ? "This permanently removes the folder and everything inside it from disk."
+          : "This permanently removes the file from disk.",
+        confirmLabel: "Delete",
+        danger: true,
+      }))
+    )
+      return;
+
+    const affectsOpen = selected != null && (selected === rel || (isDir && selected.startsWith(`${rel}/`)));
+    if (affectsOpen) {
+      holdAutosave(); // suppress the dying editor's unmount-flush (would recreate the file)
+      armDiscardBypass(); // and don't prompt about its now-moot buffer on the way out
+    }
+    try {
+      await api.deleteFile(data.root, rel);
+    } catch (e) {
+      if (affectsOpen) releaseAutosave();
+      await confirm({
+        title: "Couldn’t delete",
+        body: e instanceof Error ? e.message : "Delete failed.",
+        confirmLabel: "OK",
+      });
+      return;
+    }
+    if (affectsOpen) {
+      navigate(studioPath(data.root));
+      setTimeout(releaseAutosave, 0); // after the old editor has unmounted held
+    }
+    reload();
+  };
+
   // Skills with no declared env export in one click; otherwise the dialog surfaces
   // the bundle-secrets option and the not-bundled warning.
   const onExport = () => {
@@ -106,7 +152,7 @@ export default function StudioLayout() {
       />
       <PreviewBanner />
       <div className="flex min-h-0 flex-1">
-        <Sidebar data={data} selected={selected} onSelect={onSelect} />
+        <Sidebar data={data} selected={selected} onSelect={onSelect} onDelete={onDelete} />
         {/* The scroll pane (main) + the change overview ruler on its right edge.
             The left change bars + per-chunk Revert buttons are in-editor gutter
             decorations now (see LiveEditor); only the ruler stays an overlay (it

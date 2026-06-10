@@ -159,9 +159,13 @@ export function parseAllowedTools(value: unknown): string[] {
 }
 
 /**
- * `metadata` key skills use to declare the env vars their scripts read. Stored
- * as a space-separated string (the spec coerces metadata values to strings), so
- * it stays valid under `skills-ref validate` and travels inside SKILL.md.
+ * `metadata` key skills use to declare the env vars their scripts read —
+ * Skill Studio's own portable contract, auto-detected on save (see
+ * `reconcileRequiredEnv`). It powers the export-time "bundle these secrets?"
+ * prompt and lets an import surface which secrets a skill needs before it runs.
+ * Stored as a space-separated string (the spec types metadata values as
+ * strings), so it stays valid under `skills-ref validate` and travels inside
+ * SKILL.md wherever the skill goes.
  */
 export const REQUIRED_ENV_KEY = "required-env";
 

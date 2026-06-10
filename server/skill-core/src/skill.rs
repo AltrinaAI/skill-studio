@@ -289,6 +289,32 @@ pub fn write_file_impl(root: &str, rel: &str, content: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// Delete a file or directory inside the skill (directories are removed
+/// recursively). Two things are protected: the skill root itself and the
+/// top-level `SKILL.md` — removing either would stop the folder being a skill
+/// (deleting the whole skill is a separate, guarded operation). Path containment
+/// (incl. symlink escape) is enforced by `resolve_within_real`; `symlink_metadata`
+/// keeps us from following a symlink and deleting its target — we unlink the link.
+pub fn delete_path_impl(root: &str, rel: &str) -> Result<(), String> {
+    let cleaned = rel.replace('\\', "/");
+    let cleaned = cleaned.trim_matches('/');
+    if cleaned.is_empty() || cleaned == "." {
+        return Err("Refusing to delete the skill folder.".into());
+    }
+    if cleaned.eq_ignore_ascii_case("SKILL.md") {
+        return Err("SKILL.md can’t be deleted — it defines the skill.".into());
+    }
+    let root_path = PathBuf::from(root);
+    let abs = resolve_within_real(&root_path, rel, true)?;
+    let meta = std::fs::symlink_metadata(&abs).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        std::fs::remove_dir_all(&abs).map_err(|e| e.to_string())?;
+    } else {
+        std::fs::remove_file(&abs).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn read_image_impl(root: &str, rel: &str) -> Result<ImageData, String> {
     let root_path = PathBuf::from(root);
     let abs = resolve_within_real(&root_path, rel, true)?;

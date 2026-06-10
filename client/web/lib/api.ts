@@ -67,6 +67,11 @@ export const readFile = (root: string, rel: string) => http<FileData>("POST", "r
 export const writeFile = (root: string, rel: string, content: string) =>
   http<void>("POST", "write-file", { root, rel, content });
 
+/** Delete a file or folder inside the skill (folders recurse). SKILL.md and the
+ *  skill root are protected server-side. Destructive — confirm before calling. */
+export const deleteFile = (root: string, rel: string) =>
+  http<{ ok: boolean }>("POST", "delete-file", { root, rel }).then(() => {});
+
 const readImage = (root: string, rel: string) =>
   http<{ mime: string; base64: string }>("POST", "read-image", { root, rel });
 
@@ -746,12 +751,19 @@ export function attachTerminal(
   // round-trip, so parallel POSTs could otherwise reorder and leave the pty at a
   // stale size (a wrapped TUI that never self-corrects). Last-wins: only the
   // newest pending (cols,rows) survives, sent after the in-flight resize resolves.
+  // Resizes only land while the stream is attached (the server 400s otherwise —
+  // the pane's ResizeObserver fires before the SSE attach registers, and during
+  // reconnect gaps), so they're gated on `streamOpen`; the latest size is kept
+  // and re-asserted from es.onopen after every (re)connect — which also corrects
+  // the PTY when EventSource auto-reconnects with the stale mount-time URL size.
+  let streamOpen = false;
+  let latestSize: { cols: number; rows: number } | null = null;
   let pendingResize: { cols: number; rows: number } | null = null;
   let sendingResize = false;
   const pumpResize = async () => {
     if (sendingResize) return;
     sendingResize = true;
-    while (pendingResize) {
+    while (pendingResize && streamOpen && !closed) {
       const { cols, rows } = pendingResize;
       pendingResize = null;
       try {
@@ -762,6 +774,13 @@ export function attachTerminal(
     }
     sendingResize = false;
   };
+  es.onopen = () => {
+    streamOpen = true;
+    if (latestSize) {
+      pendingResize = latestSize;
+      void pumpResize();
+    }
+  };
   es.onmessage = (e) => {
     if (e.data) opts.onData(b64ToBytes(e.data));
   };
@@ -769,6 +788,7 @@ export function attachTerminal(
     // CLOSED ⇒ the browser gave up (e.g. a 4xx because the session is gone) and
     // won't reconnect; surface it once. CONNECTING ⇒ a transient blip, let it retry.
     log.debug("sse", `terminal/attach id=${id} readyState=${es.readyState}`);
+    streamOpen = false;
     if (es.readyState === EventSource.CLOSED && !closed) {
       closed = true;
       opts.onClose?.();
@@ -783,8 +803,9 @@ export function attachTerminal(
       void pumpInput();
     },
     resize: (cols, rows) => {
-      if (closed) return;
-      pendingResize = { cols, rows };
+      latestSize = { cols, rows };
+      if (closed || !streamOpen) return; // re-asserted from es.onopen
+      pendingResize = latestSize;
       void pumpResize();
     },
     detach: () => {

@@ -131,6 +131,46 @@ pub fn git_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Patterns Skill Studio keeps out of every skill repo's version history: build
+/// artifacts and machine-local secrets. `git add -A` (run on every "Save
+/// version") would otherwise capture them — and a published repo's history is
+/// shared. Written to the repo's LOCAL `.git/info/exclude`, NOT a committed
+/// `.gitignore`: per-repo, never committed, never pushed, never global, so
+/// nothing clutters the worktree or the published repo.
+const EXCLUDE_PATTERNS: &[&str] = &["__pycache__/", "*.py[cod]", ".DS_Store", ".env", ".env.*"];
+
+/// Ensure this repo's local `.git/info/exclude` carries [`EXCLUDE_PATTERNS`].
+/// Idempotent and additive: any lines already there (incl. the user's own) are
+/// kept; only missing patterns are appended. Best-effort — failure never blocks
+/// a read or a commit. Caller must only invoke this for a repo we own (not a
+/// skill living inside someone else's parent repo).
+fn ensure_exclude(root: &Path) {
+    // Resolve the real path — handles linked worktrees and `.git`-file repos.
+    let rel = git_ok(root, &["rev-parse", "--git-path", "info/exclude"])
+        .unwrap_or_else(|| ".git/info/exclude".into());
+    let path = root.join(rel);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let have: std::collections::HashSet<&str> = existing.lines().map(str::trim).collect();
+    let missing: Vec<&str> = EXCLUDE_PATTERNS.iter().copied().filter(|p| !have.contains(p)).collect();
+    if missing.is_empty() {
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut body = existing;
+    if body.is_empty() {
+        body.push_str("# Skill Studio — local-only ignores (build junk + secrets); not committed.\n");
+    } else if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    for p in missing {
+        body.push_str(p);
+        body.push('\n');
+    }
+    let _ = std::fs::write(&path, body);
+}
+
 pub fn git_info(root: &str) -> Result<GitInfo, String> {
     let root_path = PathBuf::from(root);
     let mut info = GitInfo {
@@ -151,6 +191,11 @@ pub fn git_info(root: &str) -> Result<GitInfo, String> {
         }
     }
     if info.is_repo {
+        // Seed the local ignore the moment a skill's own repo is viewed, so the
+        // dirty/change-list computed just below already excludes build junk —
+        // existing repos get covered without waiting for the next save. Only for
+        // repos we own; a skill inside a parent repo is someone else's to ignore.
+        ensure_exclude(&root_path);
         info.branch = git_ok(&root_path, &["branch", "--show-current"]).filter(|s| !s.is_empty());
         info.has_remote = git_ok(&root_path, &["remote"]).map(|s| !s.is_empty()).unwrap_or(false);
     }
@@ -204,16 +249,6 @@ pub fn git_init(root: &str) -> Result<GitInfo, String> {
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    // Keep machine-local secrets out of history from the very first save —
-    // version commits run `git add -A`, and a published repo's history is
-    // shared. Written before any commit so it rides the first version.
-    let gi = root_path.join(".gitignore");
-    if !gi.exists() {
-        let _ = std::fs::write(
-            &gi,
-            "# Keep machine-local secrets out of version history (Skill Studio).\n.env\n.env.*\n",
-        );
-    }
     git_info(root)
 }
 
@@ -231,6 +266,9 @@ pub fn git_commit(root: &str, message: &str) -> Result<CommitResult, String> {
             "No git identity set. Run: git config --global user.email \"you@example.com\" (and user.name).".into(),
         );
     }
+    // Guarantee build junk / secrets are ignored right before the catch-all add,
+    // even if the repo was created before this guard or the exclude was removed.
+    ensure_exclude(&root_path);
     let add = git(&root_path, &["add", "-A"])?;
     if !add.status.success() {
         return Err(String::from_utf8_lossy(&add.stderr).trim().to_string());
@@ -936,6 +974,45 @@ mod tests {
         git_discard(&root, "NOTES.md").unwrap();
         assert!(!base.join("NOTES.md").exists());
         assert!(git_discard(&root, "../escape").is_err()); // traversal rejected
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_exclude_keeps_build_junk_and_secrets_out() {
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("ass_excl_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("SKILL.md"), "---\nname: t\n---\nhi").unwrap();
+        let root = base.to_string_lossy().to_string();
+
+        git_init(&root).unwrap();
+        let _ = git(&base, &["config", "user.email", "test@example.com"]);
+        let _ = git(&base, &["config", "user.name", "Test"]);
+
+        // The junk a Python skill leaves behind, plus a stray secret.
+        std::fs::create_dir_all(base.join("scripts/__pycache__")).unwrap();
+        std::fs::write(base.join("scripts/__pycache__/_config.cpython-312.pyc"), [0u8, 1, 2]).unwrap();
+        std::fs::write(base.join(".env"), "SECRET=1\n").unwrap();
+
+        // Viewing the repo seeds the local exclude — it's never a committed file…
+        let info = git_info(&root).unwrap();
+        assert!(info.is_repo);
+        assert!(!base.join(".gitignore").exists(), "no committed .gitignore");
+        // …and the worktree reads clean of the junk (only SKILL.md is untracked).
+        let wt = git_worktree_diff(&root).unwrap();
+        let paths: Vec<&str> = wt.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.contains(&"SKILL.md"));
+        assert!(!paths.iter().any(|p| p.contains("__pycache__") || p.ends_with(".env")), "junk hidden: {paths:?}");
+
+        // The commit captures SKILL.md but neither the .pyc nor the .env.
+        git_commit(&root, "v1").unwrap();
+        let tracked = git_ok(&base, &["ls-files"]).unwrap();
+        assert!(tracked.contains("SKILL.md"));
+        assert!(!tracked.contains("__pycache__") && !tracked.contains(".env"), "tracked: {tracked}");
 
         let _ = std::fs::remove_dir_all(&base);
     }

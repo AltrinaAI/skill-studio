@@ -596,8 +596,8 @@ pub fn publish(root: &str, owner: &str, repo: &str, private: bool) -> Result<GhP
         Some(url) => Err(format!("This skill is already connected to {url} — disconnect it first.")),
         None => {
             let html_url = create_repo(&token, &info.login, owner, repo, private)?;
-            // connect_remote seeds the .gitignore, sets origin, pushes, and
-            // unwinds the origin if the first push fails.
+            // connect_remote sets origin, pushes, and unwinds the origin if the
+            // first push fails.
             let out = remotesync::connect_remote(
                 root,
                 &format!("https://github.com/{owner}/{repo}.git"),

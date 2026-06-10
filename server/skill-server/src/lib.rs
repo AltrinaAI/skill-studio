@@ -567,6 +567,9 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
         (Method::Post, "/api/write-file") => {
             json_reply(skill::write_file_impl(&s("root"), &s("rel"), &s("content")).map(|_| json!({ "ok": true })))
         }
+        (Method::Post, "/api/delete-file") => {
+            json_reply(skill::delete_path_impl(&s("root"), &s("rel")).map(|_| json!({ "ok": true })))
+        }
         (Method::Post, "/api/read-image") => json_reply(skill::read_image_impl(&s("root"), &s("rel"))),
         (Method::Post, "/api/list-dir") => json_reply(skill::list_dir_impl(
             &s("path"),

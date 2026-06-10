@@ -234,7 +234,7 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
         text: `Published ${r.pushed} version${r.pushed === 1 ? "" : "s"} to ${owner}/${repo}.`,
         url: r.htmlUrl,
       });
-      bumpGit(); // publish may have committed a .gitignore
+      bumpGit(); // publish set origin / pushed — refresh git state
       refresh();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Publish failed" });
@@ -289,7 +289,7 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
 
   const onUrlConnected = (pushed: number) => {
     setMsg({ ok: true, text: `Connected — pushed ${pushed} version${pushed === 1 ? "" : "s"}.` });
-    bumpGit(); // connecting may have committed a .gitignore
+    bumpGit(); // connect set origin / pushed — refresh git state
     refresh();
   };
 

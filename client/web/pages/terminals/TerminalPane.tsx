@@ -12,6 +12,36 @@ import { log } from "@/lib/log";
  *  full encode-and-upload through the tunnel. */
 const MAX_PASTE_BYTES = 32 * 1024 * 1024;
 
+/** A tmux copy-mode copy (OSC 52) replayed via the copy chord stays valid this
+ *  long — fresh enough to mean "the thing I just selected", stale after that. */
+const COPY_STASH_MS = 60_000;
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
+
+/** Write to the system clipboard from inside a user gesture. The async API first;
+ *  if it's denied or missing (insecure-context LAN origins have no
+ *  navigator.clipboard at all), fall back to a hidden-textarea execCommand copy,
+ *  which only works during a gesture — exactly where this is called from. */
+function copyText(text: string, refocus: () => void): void {
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      /* nothing left to try */
+    }
+    ta.remove();
+    refocus();
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(fallback);
+  else fallback();
+}
+
 // Pull terminal colors from the app's CSS variables so it tracks the theme.
 function themeFromCss(): Record<string, string | undefined> {
   const css = getComputedStyle(document.documentElement);
@@ -58,6 +88,8 @@ export default function TerminalPane({ id, visible = true }: { id: string; visib
     term.loadAddon(fit);
     // tmux owns the scrollback (wheel → copy-mode); copying there arrives as an
     // OSC 52 write — honor it so copy-mode copies land on the system clipboard.
+    // Releasing a mouse-drag IS the copy in tmux: there is no Ctrl+C step.
+    let lastCopy = { text: "", at: 0 };
     term.parser.registerOscHandler(52, (data) => {
       const semi = data.indexOf(";");
       const payload = semi < 0 ? "" : data.slice(semi + 1);
@@ -68,13 +100,38 @@ export default function TerminalPane({ id, visible = true }: { id: string; visib
       } catch {
         return true; // malformed base64
       }
-      // writeText rejects asynchronously, so a try/catch can't see it. The webview
-      // may also deny it: WKWebView gates the async clipboard on a user gesture,
-      // and this fires from the SSE stream (no gesture) — so it can silently fail
-      // on the macOS desktop. Catch the rejection (no unhandled-rejection noise);
-      // the Shift/Option+drag native-selection path above is the reliable fallback.
+      // Stash first: this write fires from the SSE stream (no user gesture), and
+      // WKWebView/insecure origins deny gestureless clipboard writes — the copy
+      // chord below replays the stash from inside a real keystroke when that
+      // happens. The rejection is async, so a try/catch could never see it.
+      lastCopy = { text, at: Date.now() };
       navigator.clipboard?.writeText(text).catch((e) => log.debug("term", "OSC52 clipboard write denied", e));
       return true;
+    });
+    // Copy chord — Cmd+C on macOS, Ctrl+Shift+C elsewhere (plain Ctrl+C must stay
+    // SIGINT; it only copies when a native Shift/Option+drag selection exists, VS
+    // Code-style). Native selection wins; otherwise replay the last tmux copy —
+    // from inside this keystroke the clipboard write is allowed everywhere.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      const key = e.key.toLowerCase();
+      // Paste chord (non-Mac; Cmd+V is already native on Mac): skip xterm so the
+      // browser's default paste fires and rides the normal text/image path.
+      // Otherwise Ctrl+V becomes a literal ^V in the pty — which Claude/Codex
+      // bind to "read MY clipboard": a dead end when the agent runs on a remote
+      // headless backend that can't see this machine's clipboard.
+      if (!IS_MAC && key === "v" && e.ctrlKey && !e.altKey && !e.metaKey) return false;
+      if (key !== "c" || e.altKey) return true;
+      const wantsCopy = IS_MAC
+        ? e.metaKey && !e.ctrlKey
+        : e.ctrlKey && !e.metaKey && (e.shiftKey || term.hasSelection());
+      if (!wantsCopy) return true;
+      const stashed = Date.now() - lastCopy.at < COPY_STASH_MS ? lastCopy.text : "";
+      const text = term.hasSelection() ? term.getSelection() : stashed;
+      if (!text) return true;
+      copyText(text, () => term.focus());
+      term.clearSelection();
+      return false;
     });
     term.open(host);
     try {

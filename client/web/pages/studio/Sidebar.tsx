@@ -11,10 +11,12 @@ export default function Sidebar({
   data,
   selected,
   onSelect,
+  onDelete,
 }: {
   data: SkillData;
   selected: string | null;
   onSelect: (rel: string) => void;
+  onDelete: (rel: string, isDir: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [versionsH, setVersionsH] = useState(300); // px height of the bottom panel
@@ -50,7 +52,7 @@ export default function Sidebar({
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="px-4 pb-1 pt-3 text-[0.68rem] font-semibold uppercase tracking-wider text-muted">Files</div>
         <nav className="min-h-0 flex-1 overflow-auto">
-          <FileTree nodes={data.tree} selected={selected} onSelect={onSelect} />
+          <FileTree nodes={data.tree} selected={selected} onSelect={onSelect} onDelete={onDelete} />
         </nav>
       </div>
 

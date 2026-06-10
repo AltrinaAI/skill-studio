@@ -103,7 +103,10 @@ pub(crate) fn config_dir() -> Result<PathBuf, String> {
 fn store_path() -> Result<PathBuf, String> {
     Ok(config_dir()?.join("secrets.json"))
 }
-fn env_path() -> Result<PathBuf, String> {
+/// Path of the rendered shell-sourceable env file. Public because the terminal
+/// launcher (`skill-term`) sources it when spinning up an agent session, so
+/// managed secrets are present in the agent's environment from the start.
+pub fn env_path() -> Result<PathBuf, String> {
     Ok(config_dir()?.join("env"))
 }
 
