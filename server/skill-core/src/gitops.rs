@@ -512,7 +512,9 @@ pub fn git_commit_diff(root: &str, sha: &str) -> Result<CommitDetail, String> {
     if !git_available() {
         return Err("Git isn't installed.".into());
     }
-    if !is_hex_rev(sha) {
+    // "HEAD" or a hex SHA. HEAD lets the version-preview review work after a reload,
+    // when the previewed commit is reached via the detached HEAD rather than a SHA.
+    if sha != "HEAD" && !is_hex_rev(sha) {
         return Err("Invalid commit reference.".into());
     }
     let root_path = PathBuf::from(root);
@@ -570,7 +572,12 @@ pub fn git_file_at(root: &str, rev: &str, path: &str) -> Result<String, String> 
     if !git_available() {
         return Err("Git isn't installed.".into());
     }
-    if rev != "HEAD" && !is_hex_rev(rev) {
+    // Accept "HEAD" or a hex SHA, each optionally with a single trailing "^" (first
+    // parent). The parent rev backs the "what changed in this version" review of a
+    // past version: HEAD is detached onto that version, so HEAD^ is the version
+    // before it. Anything else can't slip through as a git option.
+    let base = rev.strip_suffix('^').unwrap_or(rev);
+    if base != "HEAD" && !is_hex_rev(base) {
         return Err("Invalid revision.".into());
     }
     let rel = path.trim_start_matches("./");

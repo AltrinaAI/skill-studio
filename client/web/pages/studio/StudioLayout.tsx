@@ -23,7 +23,7 @@ import { studioFilePath, studioPath } from "@/lib/routes";
  * AppShell only intervenes if an autosave actually failed.
  */
 export default function StudioLayout() {
-  const { data, reload } = useStudio();
+  const { data, reload, preview } = useStudio();
   const navigate = useNavigate();
   const confirm = useConfirm();
 
@@ -56,7 +56,10 @@ export default function StudioLayout() {
   const [searchParams, setSearchParams] = useSearchParams();
   const reviewMode = searchParams.get("diff") === "worktree";
   const reviewAvailable = useReviewAvailable(data.root, selected ?? "SKILL.md");
-  const showReview = selected != null && (reviewMode || reviewAvailable);
+  // While viewing a past version there's always something to review — the changes
+  // that version introduced (it vs the previous version) — so offer the toggle
+  // even though the working tree itself is clean (it equals the detached HEAD).
+  const showReview = selected != null && (reviewMode || reviewAvailable || preview != null);
   const toggleReview = useCallback(
     () =>
       setSearchParams(
@@ -146,6 +149,7 @@ export default function StudioLayout() {
         selected={selected}
         reviewMode={reviewMode}
         showReview={showReview}
+        previewing={preview != null}
         onToggleReview={toggleReview}
         onManage={() => setManageOpen(true)}
         onExport={onExport}

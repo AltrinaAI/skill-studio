@@ -231,9 +231,12 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
   // carries the frontmatter too, so we parse HEAD's SKILL.md and diff body-only
   // (frontmatter edits live in the form above, not the prose overlay). The
   // "Review changes" toggle lives in the nav bar; this reacts to ?diff=worktree. ---
-  const { gitVersion } = useStudio();
+  const { gitVersion, preview } = useStudio();
   const [searchParams] = useSearchParams();
   const reviewRequested = searchParams.get("diff") === "worktree";
+  // Reviewing a past version diffs it against its parent (HEAD^ — HEAD is detached
+  // onto the version); otherwise against HEAD, the last saved version.
+  const baseRev = preview && reviewRequested ? "HEAD^" : "HEAD";
   // The HEAD SKILL.md is fetched for every tracked skill (not just review): the
   // body feeds the editor's change indicators, and the name/description feed an
   // inline word diff shown in review mode when they changed. undefined = not
@@ -260,7 +263,7 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
           clear();
           return undefined;
         }
-        return api.gitFileAt(data.root, "HEAD", "SKILL.md").then((raw) => {
+        return api.gitFileAt(data.root, baseRev, "SKILL.md").then((raw) => {
           if (myReq !== reqRef.current) return;
           const head = raw ? parseSkillMd(raw) : null;
           setHeadBody(head ? head.body : "");
@@ -271,7 +274,7 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
       .catch(() => {
         if (myReq === reqRef.current) clear();
       });
-  }, [data.root, gitVersion]);
+  }, [data.root, gitVersion, baseRev]);
 
   const dupKeys = useMemo(() => {
     const trimmed = meta.map((r) => r.key.trim());

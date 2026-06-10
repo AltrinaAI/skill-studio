@@ -27,6 +27,7 @@ export default function TopBar({
   selected,
   reviewMode,
   showReview,
+  previewing,
   onToggleReview,
   onManage,
   onExport,
@@ -37,6 +38,8 @@ export default function TopBar({
   reviewMode: boolean;
   /** The open file can be reviewed (tracked + has changes) — show the toggle. */
   showReview: boolean;
+  /** Viewing a past version: review shows what THAT version changed, not working-tree edits. */
+  previewing: boolean;
   onToggleReview: () => void;
   onManage: () => void;
   onExport: () => void;
@@ -66,7 +69,11 @@ export default function TopBar({
           type="button"
           onClick={onToggleReview}
           aria-pressed={reviewMode}
-          title="Review change mode — show changes since the last saved version"
+          title={
+            previewing
+              ? "Review change mode — show what changed in this version"
+              : "Review change mode — show changes since the last saved version"
+          }
           className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ${
             reviewMode ? "bg-accent text-accent-fg hover:opacity-90" : "text-muted hover:bg-panel hover:text-fg"
           }`}

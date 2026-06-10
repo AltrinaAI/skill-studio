@@ -123,23 +123,32 @@ body {
   background: var(--sel);
 }
 
-/* Thin, unobtrusive scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
+/* VS Code-style scrollbars: a flat square block thumb on an invisible track,
+   hidden until the pointer is over the scroll area so chrome never clutters
+   the UI at rest. ::-webkit-scrollbar covers every target webview (WebKit,
+   WebView2, Chromium dev browser). Do NOT add the standard scrollbar-width/
+   scrollbar-color properties: when present, Chromium honors them and ignores
+   all ::-webkit-scrollbar styling, killing the block design. */
 *::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 6px;
-  border: 2px solid transparent;
-  background-clip: content-box;
+  background: transparent; /* invisible at rest */
+  border-radius: 0;
 }
-*::-webkit-scrollbar-track {
-  background: transparent;
+*:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 32%, transparent);
+}
+*::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--fg) 45%, transparent);
 }
 
 /* ---------------------------------------------------------------------- */

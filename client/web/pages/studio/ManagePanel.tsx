@@ -8,7 +8,6 @@ import { useConfirm } from "@/components/useConfirm";
 import * as api from "@/lib/api";
 import type { SyncTarget } from "@/lib/api";
 import { secretsPath } from "@/lib/routes";
-import { GitHubSection } from "./GitHubSync";
 
 const btnGhost =
   "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
@@ -321,9 +320,6 @@ export default function ManagePanel({
           </Section>
           <Section title="Sync to another agent">
             <SyncSection root={root} />
-          </Section>
-          <Section title="Publish to GitHub">
-            <GitHubSection root={root} dirName={dirName} />
           </Section>
           <Section title="Delete">
             <DeleteSection root={root} dirName={dirName} kind={kind} onDeleted={onDeleted} />

@@ -14,7 +14,7 @@ const LiveEditor = lazy(() => import("@/components/LiveEditor"));
 const EditorFallback = () => <div className="px-8 py-6 text-sm text-muted">Loading editor…</div>;
 
 export default function FilePane({ root, file, onSaved }: { root: string; file: FileData; onSaved?: () => void }) {
-  const { gitVersion } = useStudio();
+  const { gitVersion, preview } = useStudio();
   const editable = file.content != null && !file.tooLarge && !file.isBinary && file.category !== "image";
   // The in-editor WYSIWYG diff overlay is prose-only; other file types (code,
   // etc.) review via a plain read-only unified diff instead.
@@ -44,6 +44,11 @@ export default function FilePane({ root, file, onSaved }: { root: string; file: 
   const [searchParams] = useSearchParams();
   const reviewRequested = searchParams.get("diff") === "worktree";
   const codeReview = reviewRequested && editable && !isMarkdown; // read-only code diff (no editor)
+  // While viewing a past version, "review" shows what THAT version changed — diff
+  // against its parent. HEAD is detached onto the version, so HEAD^ is the version
+  // before it. Otherwise we diff against HEAD (the last saved version), and the
+  // always-on change indicators keep tracking unsaved edits against it.
+  const baseRev = preview && reviewRequested ? "HEAD^" : "HEAD";
   // The file's HEAD content (indicators baseline). undefined = not tracked / not
   // loaded; "" = a new/untracked file (whole buffer reads as added).
   const [baseline, setBaseline] = useState<string | undefined>(undefined);
@@ -60,11 +65,14 @@ export default function FilePane({ root, file, onSaved }: { root: string; file: 
       return;
     }
     if (codeReview) {
-      // Read-only code diff — no editor, so no baseline needed.
+      // Read-only code diff — no editor, so no baseline needed. For a past version,
+      // show that version's own diff (vs its parent); otherwise the working tree's.
       setBaseline(undefined);
-      api
-        .gitWorktreeDiff(root)
-        .then((wt) => myReq === reqRef.current && setCodeDiff({ diff: wt.diff, truncated: wt.truncated }))
+      const load = preview
+        ? api.gitCommitDiff(root, preview.sha || "HEAD").then((d) => ({ diff: d.diff, truncated: d.truncated }))
+        : api.gitWorktreeDiff(root).then((wt) => ({ diff: wt.diff, truncated: wt.truncated }));
+      load
+        .then((d) => myReq === reqRef.current && setCodeDiff(d))
         .catch(() => myReq === reqRef.current && setCodeDiff({ diff: "", truncated: false }));
       return;
     }
@@ -83,12 +91,12 @@ export default function FilePane({ root, file, onSaved }: { root: string; file: 
           setBaseline(undefined);
           return undefined;
         }
-        return api.gitFileAt(root, "HEAD", file.rel).then((b) => {
+        return api.gitFileAt(root, baseRev, file.rel).then((b) => {
           if (myReq === reqRef.current) setBaseline(b);
         });
       })
       .catch(() => myReq === reqRef.current && setBaseline(undefined));
-  }, [codeReview, editable, root, file.rel, gitVersion]);
+  }, [codeReview, editable, root, file.rel, gitVersion, baseRev, preview]);
 
   const save = useCallback(async () => {
     await api.writeFile(root, file.rel, content);
@@ -104,18 +112,25 @@ export default function FilePane({ root, file, onSaved }: { root: string; file: 
       {inDiff && (
         <div className="mb-5 rounded-md border border-accent/30 bg-accent-soft px-3 py-2 text-xs text-muted">
           {isNewFile ? (
-            <>New file — all lines are new since the last commit.</>
+            preview ? (
+              <>New in this version — every line was added.</>
+            ) : (
+              <>New file — all lines are new since the last commit.</>
+            )
           ) : (
             <>
-              Reviewing changes since the last commit. Hover a change for{" "}
-              <span className="font-medium text-fg">Revert</span>; <kbd className="font-sans">F7</kbd> jumps to the next.
+              {preview ? "Changes in this version, vs the previous one." : "Reviewing changes since the last commit."}{" "}
+              Hover a change for <span className="font-medium text-fg">Revert</span>;{" "}
+              <kbd className="font-sans">F7</kbd> jumps to the next.
             </>
           )}
         </div>
       )}
       {codeReview && (
         <div className="mb-5 rounded-md border border-accent/30 bg-accent-soft px-3 py-2 text-xs text-muted">
-          Changes since the last commit (read-only). Save edits first to see them here.
+          {preview
+            ? "Changes in this version, vs the previous one (read-only)."
+            : "Changes since the last commit (read-only). Save edits first to see them here."}
         </div>
       )}
       <div className="mb-5 flex items-center gap-3 text-xs text-muted">

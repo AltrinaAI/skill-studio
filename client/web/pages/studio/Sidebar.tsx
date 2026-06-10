@@ -19,7 +19,9 @@ export default function Sidebar({
   onDelete: (rel: string, isDir: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [versionsH, setVersionsH] = useState(300); // px height of the bottom panel
+  // Bottom-panel height: most of the sidebar by default (the file tree is usually
+  // short); a drag pins it to a px value.
+  const [versionsH, setVersionsH] = useState<number | null>(null);
   const dragging = useRef(false);
 
   const onMove = useCallback((e: PointerEvent) => {
@@ -69,7 +71,7 @@ export default function Sidebar({
       </div>
 
       {/* Versions (git) — its own "New Changes" / "Versions" section headers. */}
-      <div className="flex shrink-0 flex-col overflow-hidden" style={{ height: versionsH }}>
+      <div className="flex shrink-0 flex-col overflow-hidden" style={{ height: versionsH ?? "62%" }}>
         <SourceControl root={data.root} dirName={data.dirName} />
       </div>
     </aside>

@@ -141,18 +141,16 @@ function ConnectByUrl({ root, onConnected }: { root: string; onConnected: (pushe
   }
   return (
     <div className="space-y-1.5">
-      <div className="flex gap-2">
-        <input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://gitlab.com/you/skill.git or git@host:path.git"
-          className={`${inputCls} font-mono text-xs`}
-          onKeyDown={(e) => e.key === "Enter" && url.trim() && doConnect()}
-        />
-        <button type="button" onClick={doConnect} disabled={busy || !url.trim()} className={`${btnPrimary} shrink-0`}>
-          {busy ? "Connecting…" : "Connect"}
-        </button>
-      </div>
+      <input
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://gitlab.com/you/skill.git or git@host:path.git"
+        className={`${inputCls} font-mono text-xs`}
+        onKeyDown={(e) => e.key === "Enter" && url.trim() && doConnect()}
+      />
+      <button type="button" onClick={doConnect} disabled={busy || !url.trim()} className={`${btnPrimary} w-full`}>
+        {busy ? "Connecting…" : "Connect"}
+      </button>
       <p className="text-[0.7rem] text-faint">
         Create an empty repository on any git host and paste its clone URL — pushes/pulls use this machine’s
         own git credentials.
@@ -163,8 +161,12 @@ function ConnectByUrl({ root, onConnected }: { root: string; onConnected: (pushe
 }
 
 // ---- the section -------------------------------------------------------------
+// Lives in the Source Control sidebar as the "GitHub" panel — the remote half of
+// version history (a version action, like the VS Code SCM panel it imitates).
+// Handles every state: not signed in, signed in + ready to publish, and
+// connected (Sync now / Disconnect). Styled narrow for the sidebar.
 export function GitHubSection({ root, dirName }: { root: string; dirName: string }) {
-  const { reload, bumpGit } = useStudio();
+  const { reload, bumpGit, gitVersion } = useStudio();
   const confirm = useConfirm();
   const [status, setStatus] = useState<GhStatus | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -180,14 +182,16 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
   const [connecting, setConnecting] = useState(false);
   const [connectErr, setConnectErr] = useState<string | null>(null);
 
-  // One status round-trip including the remote check (fetch + ahead/behind).
+  // Cheap local check first; only pay the network round-trip (fetch + ahead/behind)
+  // when there's actually a remote — this panel is always mounted in the sidebar.
   const refresh = useCallback(() => {
     setLoadErr(null);
     api
-      .githubStatus(root, true)
+      .githubStatus(root, false)
       .then((s) => {
         setStatus(s);
         setOwner((o) => o || s.auth?.login || "");
+        if (s.link) api.githubStatus(root, true).then(setStatus).catch(() => {});
       })
       .catch((e) => {
         setStatus(null);
@@ -195,6 +199,8 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
       });
   }, [root]);
   useEffect(() => refresh(), [refresh]);
+  // Re-check after a version is saved or synced elsewhere (push count, ahead/behind).
+  useEffect(() => refresh(), [gitVersion, refresh]);
 
   // The publish form needs the owner list (account + orgs).
   const formVisible = !!status?.auth && status.tracked && status.hasVersion && !status.link;
@@ -243,6 +249,12 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
     }
   };
 
+  const onUrlConnected = (pushed: number) => {
+    setMsg({ ok: true, text: `Connected — pushed ${pushed} version${pushed === 1 ? "" : "s"}.` });
+    bumpGit(); // connect set origin / pushed — refresh git state
+    refresh();
+  };
+
   const doSync = async () => {
     setBusy(true);
     setMsg(null);
@@ -283,14 +295,8 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
       setMsg(null);
       refresh();
     } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn't disconnect" });
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn’t disconnect" });
     }
-  };
-
-  const onUrlConnected = (pushed: number) => {
-    setMsg({ ok: true, text: `Connected — pushed ${pushed} version${pushed === 1 ? "" : "s"}.` });
-    bumpGit(); // connect set origin / pushed — refresh git state
-    refresh();
   };
 
   if (loadErr) return <p className="text-xs text-danger">{loadErr}</p>;
@@ -325,24 +331,22 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
         </div>
         {tokenOpen && (
           <div className="space-y-1.5">
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="ghp_… / github_pat_…"
-                className={`${inputCls} font-mono text-xs`}
-                onKeyDown={(e) => e.key === "Enter" && token && doConnectToken()}
-              />
-              <button
-                type="button"
-                onClick={doConnectToken}
-                disabled={connecting || !token.trim()}
-                className={`${btnPrimary} shrink-0`}
-              >
-                {connecting ? "Checking…" : "Connect"}
-              </button>
-            </div>
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="ghp_… / github_pat_…"
+              className={`${inputCls} font-mono text-xs`}
+              onKeyDown={(e) => e.key === "Enter" && token && doConnectToken()}
+            />
+            <button
+              type="button"
+              onClick={doConnectToken}
+              disabled={connecting || !token.trim()}
+              className={`${btnPrimary} w-full`}
+            >
+              {connecting ? "Checking…" : "Connect"}
+            </button>
             <p className="text-[0.7rem] text-faint">
               A classic token with <span className="font-mono">repo</span> scope (add{" "}
               <span className="font-mono">read:org</span> to list your orgs).
@@ -414,24 +418,33 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
       ) : !status.hasVersion ? (
         <p className="text-xs text-muted">Save a version first — the repository is published with your version history.</p>
       ) : link ? (
-        <>
-          <div className="rounded-md border border-border bg-panel px-3 py-2 text-sm">
+        <div className="space-y-2">
+          <div className="rounded-md border border-border bg-panel px-3 py-2">
             {link.htmlUrl ? (
               <a
                 href={link.htmlUrl}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="font-mono text-xs text-fg underline-offset-2 hover:underline"
+                title={link.label}
+                className="block truncate font-mono text-xs text-fg underline-offset-2 hover:underline"
               >
                 {link.label} ↗
               </a>
             ) : (
-              <span className="font-mono text-xs text-fg">{link.label}</span>
+              <span className="block truncate font-mono text-xs text-fg" title={link.label}>
+                {link.label}
+              </span>
             )}
             {remoteState && <p className={`mt-0.5 text-[0.7rem] ${remoteState.tone}`}>{remoteState.text}</p>}
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={doSync} disabled={busy} className={btnPrimary}>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={doSync}
+              disabled={busy}
+              title="Pull the remote's versions, then push yours on top"
+              className="rounded-md border border-accent/50 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent-soft disabled:opacity-40"
+            >
               {busy ? "Syncing…" : "Sync now"}
             </button>
             <button type="button" className="text-xs text-faint hover:text-fg" onClick={doUnlink}>
@@ -441,26 +454,24 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
           <p className="text-[0.7rem] text-faint">
             The remote is the source of truth — syncing pulls its changes first; your versions go on top.
           </p>
-        </>
+        </div>
       ) : auth ? (
         <div className="space-y-2">
-          <div className="flex gap-2">
-            <select value={owner} onChange={(e) => setOwner(e.target.value)} className={`${inputCls} max-w-[45%]`}>
-              {(owners ?? [{ login: auth.login, kind: "user" as const, canCreate: true }]).map((o) => (
-                <option key={o.login} value={o.login} disabled={!o.canCreate}>
-                  {o.login}
-                  {o.kind === "org" ? " (org)" : ""}
-                  {o.canCreate ? "" : " — no permission"}
-                </option>
-              ))}
-            </select>
-            <input
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              placeholder={dirName}
-              className={`${inputCls} font-mono text-xs`}
-            />
-          </div>
+          <select value={owner} onChange={(e) => setOwner(e.target.value)} className={inputCls}>
+            {(owners ?? [{ login: auth.login, kind: "user" as const, canCreate: true }]).map((o) => (
+              <option key={o.login} value={o.login} disabled={!o.canCreate}>
+                {o.login}
+                {o.kind === "org" ? " (org)" : ""}
+                {o.canCreate ? "" : " — no permission"}
+              </option>
+            ))}
+          </select>
+          <input
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+            placeholder={dirName}
+            className={`${inputCls} font-mono text-xs`}
+          />
           <label className="flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
             Private repository
@@ -469,7 +480,12 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
             Creates <span className="font-mono">{owner || "…"}/{repo || "…"}</span> and pushes this skill’s
             version history.
           </p>
-          <button type="button" onClick={doPublish} disabled={busy || !owner || !repo.trim()} className={btnPrimary}>
+          <button
+            type="button"
+            onClick={doPublish}
+            disabled={busy || !owner || !repo.trim()}
+            className={`${btnPrimary} w-full`}
+          >
             {busy ? "Publishing…" : "Publish to GitHub"}
           </button>
           <ConnectByUrl root={root} onConnected={onUrlConnected} />
