@@ -140,6 +140,16 @@ export default function TerminalPane({ id, visible = true }: { id: string; visib
       /* host not laid out yet */
     }
 
+    // xterm captures its colors at construction and renders to a canvas, so it
+    // can't follow CSS the way the rest of the UI does — without this it keeps
+    // stale colors until it's remounted, lagging the rest of the app on a theme
+    // toggle. Re-read the CSS vars whenever the `.dark` class on <html> flips
+    // (the theme's source of truth), regardless of what triggered the change.
+    const themeObs = new MutationObserver(() => {
+      term.options.theme = themeFromCss();
+    });
+    themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
     const handle = api.attachTerminal(id, {
       cols: term.cols,
       rows: term.rows,
@@ -217,6 +227,7 @@ export default function TerminalPane({ id, visible = true }: { id: string; visib
       gone = true;
       host.removeEventListener("paste", onPaste, true);
       cancelAnimationFrame(raf);
+      themeObs.disconnect();
       ro.disconnect();
       dataSub.dispose();
       handle.detach();
