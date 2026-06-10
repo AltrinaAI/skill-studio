@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(name_from_url("https://github.com/o/My_Skill.git").as_deref(), Some("my-skill"));
         assert_eq!(name_from_url("git@gitlab.com:o/pdf.git").as_deref(), Some("pdf"));
         assert_eq!(name_from_url("/tmp/skills/repo.git").as_deref(), Some("repo"));
-        assert_eq!(name_from_url("https://host/---").is_none(), true);
+        assert!(name_from_url("https://host/---").is_none());
     }
 
     #[test]
