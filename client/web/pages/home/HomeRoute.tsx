@@ -8,12 +8,12 @@ import FolderPicker from "@/components/FolderPicker";
 import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillDialog from "./ImportSkillDialog";
 import { useConfirm } from "@/components/useConfirm";
-import { useRecents, removeRecent } from "@/lib/recents";
+import { useRecents, removeRecent, type Recent } from "@/lib/recents";
 import { agentColor, kindMeta, KIND_TAG, AGENT_GROUP_INFO } from "@/lib/agents";
 import * as api from "@/lib/api";
 import type { AgentSkills, DiscoveredSkill } from "@/lib/api";
 import { useNavigate } from "react-router-dom";
-import { studioPath } from "@/lib/routes";
+import { studioPath, markdownPath } from "@/lib/routes";
 
 const EXAMPLES = [
   { name: "docx", path: "examples/docx", blurb: "Create & edit Word documents" },
@@ -23,6 +23,9 @@ const EXAMPLES = [
 ];
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+
+/** Markdown-family extension — a pasted path ending this way opens as a loose file. */
+const MARKDOWN_EXT = /\.(md|markdown|mdx)$/i;
 
 function PlusIcon() {
   return (
@@ -378,6 +381,10 @@ export function Component() {
   const recents = useRecents();
   const navigate = useNavigate();
   const onOpen = (p: string) => navigate(studioPath(p));
+  // Recents mix skills and loose markdown files; route each to the right place.
+  const openRecent = (r: Recent) => navigate(r.kind === "markdown" ? markdownPath(r.root) : studioPath(r.root));
+  // The path field opens either a skill folder or a single .md file (by extension).
+  const openPath = (p: string) => navigate(MARKDOWN_EXT.test(p) ? markdownPath(p) : studioPath(p));
   const [path, setPath] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -537,7 +544,7 @@ export function Component() {
             className="mt-6 flex items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              if (path.trim()) onOpen(path.trim());
+              if (path.trim()) openPath(path.trim());
             }}
           >
             <input
@@ -573,7 +580,7 @@ export function Component() {
                 <div key={r.root} className="group relative">
                   <button
                     type="button"
-                    onClick={() => onOpen(r.root)}
+                    onClick={() => openRecent(r)}
                     className="flex w-full flex-col gap-1 rounded-xl border border-border bg-surface p-3.5 pr-8 text-left transition-colors hover:border-border-strong hover:bg-panel"
                   >
                     <span className="truncate text-sm font-semibold text-fg">{r.name}</span>
@@ -666,6 +673,10 @@ export function Component() {
           onSelect={(p) => {
             setShowPicker(false);
             onOpen(p);
+          }}
+          onSelectFile={(p) => {
+            setShowPicker(false);
+            navigate(markdownPath(p));
           }}
           onClose={() => setShowPicker(false)}
         />

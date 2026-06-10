@@ -78,6 +78,9 @@ pub struct DirEntry {
     name: String,
     is_dir: bool,
     is_skill: bool,
+    /// A markdown-family file (.md/.markdown/.mdx) — lets the picker offer "Open"
+    /// only on files the loose-markdown editor can render. Always false for dirs.
+    is_markdown: bool,
 }
 
 #[derive(Serialize)]
@@ -305,8 +308,11 @@ pub fn read_image_impl(root: &str, rel: &str) -> Result<ImageData, String> {
 }
 
 /// List subdirectories of `path` (for a remote folder picker). Shows hidden dirs
-/// (skills live under e.g. ~/.codex) and flags which dirs are skills.
-pub fn list_dir_impl(path: &str) -> Result<DirListing, String> {
+/// (skills live under e.g. ~/.codex) and flags which dirs are skills. With
+/// `include_files`, regular files are listed too (flagged `is_markdown`) so the
+/// picker can open a loose markdown file; without it the listing is dirs-only,
+/// exactly as the skill-folder picker has always seen it.
+pub fn list_dir_impl(path: &str, include_files: bool) -> Result<DirListing, String> {
     let p = if path.trim().is_empty() {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
     } else {
@@ -320,19 +326,33 @@ pub fn list_dir_impl(path: &str) -> Result<DirListing, String> {
     if let Ok(rd) = std::fs::read_dir(&p) {
         for e in rd.filter_map(|e| e.ok()) {
             let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if !is_dir {
-                continue;
-            }
             let name = e.file_name().to_string_lossy().into_owned();
-            let is_skill = p.join(&name).join("SKILL.md").exists();
-            entries.push(DirEntry {
-                name,
-                is_dir: true,
-                is_skill,
-            });
+            if is_dir {
+                let is_skill = p.join(&name).join("SKILL.md").exists();
+                entries.push(DirEntry {
+                    name,
+                    is_dir: true,
+                    is_skill,
+                    is_markdown: false,
+                });
+            } else if include_files {
+                let is_markdown = filetypes::file_type(&name).0 == "markdown";
+                entries.push(DirEntry {
+                    name,
+                    is_dir: false,
+                    is_skill: false,
+                    is_markdown,
+                });
+            }
         }
     }
-    entries.sort_by_key(|e| e.name.to_lowercase());
+    // Dirs first, then files, each alphabetical. Dirs-only mode (the skill picker)
+    // collapses to the previous plain alphabetical order.
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     Ok(DirListing {
         path: p.to_string_lossy().into_owned(),
         parent: p.parent().map(|pp| pp.to_string_lossy().into_owned()),
@@ -591,6 +611,34 @@ mod tests {
         ];
         let found = scan_for_env_vars(&base, &candidates);
         assert_eq!(found, vec!["GITHUB_TOKEN".to_string(), "OPENAI_API_KEY".to_string()]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn list_dir_files_gated_and_flagged() {
+        let base = std::env::temp_dir().join(format!("ass_listdir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("a-skill")).unwrap();
+        std::fs::write(base.join("a-skill/SKILL.md"), "x").unwrap();
+        std::fs::create_dir_all(base.join("plain-dir")).unwrap();
+        std::fs::write(base.join("notes.md"), "# hi").unwrap();
+        std::fs::write(base.join("data.txt"), "x").unwrap();
+
+        // Dirs-only (the skill-folder picker): no files surface, regardless of ext.
+        let dirs_only = list_dir_impl(&base.to_string_lossy(), false).unwrap();
+        assert!(dirs_only.entries.iter().all(|e| e.is_dir));
+        assert_eq!(dirs_only.entries.len(), 2);
+        assert!(dirs_only.entries.iter().any(|e| e.name == "a-skill" && e.is_skill));
+
+        // include_files: files appear, .md flagged is_markdown, dirs sort first.
+        let with_files = list_dir_impl(&base.to_string_lossy(), true).unwrap();
+        assert_eq!(with_files.entries.len(), 4);
+        assert!(with_files.entries[0].is_dir && with_files.entries[1].is_dir, "dirs sort before files");
+        let md = with_files.entries.iter().find(|e| e.name == "notes.md").unwrap();
+        assert!(!md.is_dir && md.is_markdown);
+        let txt = with_files.entries.iter().find(|e| e.name == "data.txt").unwrap();
+        assert!(!txt.is_dir && !txt.is_markdown);
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -72,6 +72,11 @@ function RemoteDialog({ onClose }: { onClose: () => void }) {
   const connected = status.state === "connected";
   const errored = status.state === "error";
 
+  // WSL distros (Windows) are offered as `wsl:<distro>` targets; split them from the
+  // ssh-config aliases so each gets its own labelled group.
+  const wslHosts = (hosts ?? []).filter((h) => h.name.startsWith("wsl:"));
+  const sshHosts = (hosts ?? []).filter((h) => !h.name.startsWith("wsl:"));
+
   useEffect(() => {
     api.remoteList().then(setHosts).catch(() => setHosts([]));
   }, []);
@@ -164,25 +169,12 @@ function RemoteDialog({ onClose }: { onClose: () => void }) {
 
               {hosts === null ? (
                 <p className="flex items-center gap-2 text-sm text-muted">
-                  <Spinner className="h-3.5 w-3.5" /> Reading ~/.ssh/config…
+                  <Spinner className="h-3.5 w-3.5" /> Reading hosts…
                 </p>
               ) : hosts.length > 0 ? (
-                <div>
-                  <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted">From ~/.ssh/config</label>
-                  <div className="max-h-48 space-y-1 overflow-auto">
-                    {hosts.map((h) => (
-                      <button
-                        key={h.name}
-                        type="button"
-                        onClick={() => void doConnect(h.name)}
-                        className="flex w-full items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left text-fg transition-colors hover:border-border-strong hover:bg-panel"
-                      >
-                        <ServerIcon className="shrink-0 text-muted" />
-                        <span className="truncate font-mono text-xs">{h.name}</span>
-                        {h.detail && <span className="ml-auto truncate text-xs text-faint">{h.detail}</span>}
-                      </button>
-                    ))}
-                  </div>
+                <div className="space-y-3">
+                  <HostGroup label="WSL distros" hosts={wslHosts} display={(h) => h.name.replace(/^wsl:/, "")} onPick={doConnect} />
+                  <HostGroup label="From ~/.ssh/config" hosts={sshHosts} display={(h) => h.name} onPick={doConnect} />
                 </div>
               ) : (
                 <p className="text-xs text-faint">No hosts in ~/.ssh/config — type one above.</p>
@@ -209,5 +201,39 @@ function RemoteDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
     </Modal>
+  );
+}
+
+/** A labelled list of pickable hosts; renders nothing when empty. */
+function HostGroup({
+  label,
+  hosts,
+  display,
+  onPick,
+}: {
+  label: string;
+  hosts: api.RemoteHost[];
+  display: (h: api.RemoteHost) => string;
+  onPick: (host: string) => void;
+}) {
+  if (hosts.length === 0) return null;
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted">{label}</label>
+      <div className="max-h-48 space-y-1 overflow-auto">
+        {hosts.map((h) => (
+          <button
+            key={h.name}
+            type="button"
+            onClick={() => void onPick(h.name)}
+            className="flex w-full items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left text-fg transition-colors hover:border-border-strong hover:bg-panel"
+          >
+            <ServerIcon className="shrink-0 text-muted" />
+            <span className="truncate font-mono text-xs">{display(h)}</span>
+            {h.detail && <span className="ml-auto truncate text-xs text-faint">{h.detail}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

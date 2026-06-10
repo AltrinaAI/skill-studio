@@ -193,13 +193,20 @@ export interface DirEntry {
   name: string;
   isDir: boolean;
   isSkill: boolean;
+  /** A markdown-family file (only present when `listDir` is called with
+   *  `includeFiles`); false for dirs and non-markdown files. */
+  isMarkdown: boolean;
 }
 export interface DirListing {
   path: string;
   parent: string | null;
   entries: DirEntry[];
 }
-export const listDir = (path: string) => http<DirListing>("POST", "list-dir", { path });
+/** Browse a directory server-side. By default lists subdirectories only (the
+ *  skill-folder picker); pass `includeFiles` to also list regular files (the
+ *  loose-markdown picker), each flagged `isMarkdown`. */
+export const listDir = (path: string, includeFiles = false) =>
+  http<DirListing>("POST", "list-dir", { path, includeFiles });
 
 export interface DiscoveredSkill {
   name?: string;

@@ -568,7 +568,10 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
             json_reply(skill::write_file_impl(&s("root"), &s("rel"), &s("content")).map(|_| json!({ "ok": true })))
         }
         (Method::Post, "/api/read-image") => json_reply(skill::read_image_impl(&s("root"), &s("rel"))),
-        (Method::Post, "/api/list-dir") => json_reply(skill::list_dir_impl(&s("path"))),
+        (Method::Post, "/api/list-dir") => json_reply(skill::list_dir_impl(
+            &s("path"),
+            v.get("includeFiles").and_then(|x| x.as_bool()).unwrap_or(false),
+        )),
         (Method::Post, "/api/sync-targets") => json_reply(sync::sync_targets(&s("root"))),
         (Method::Post, "/api/sync-skill") => {
             let overwrite = v.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false);

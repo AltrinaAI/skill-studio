@@ -1,8 +1,9 @@
-//! The SSH connection manager — the `RemoteControl` impl that a `skill-server`
+//! The remote connection manager — the `RemoteControl` impl that a `skill-server`
 //! exposes over `/api/remote/*`. It shells out to the system `ssh` (inheriting the
-//! user's keys/config/ProxyJump), provisions a version-pinned `skill-server` on the
-//! remote, launches it on a loopback port with a bearer token, and `ssh -L` tunnels
-//! to it; the local server then proxies `/api/*` to that tunnel (see `proxy.rs`).
+//! user's keys/config/ProxyJump) or, for a local WSL/WSL2 distro on Windows, to
+//! `wsl.exe`; it provisions a version-pinned `skill-server` on the target, launches it
+//! on a loopback port with a bearer token, and reaches it (`ssh -L` tunnel, or WSL's
+//! shared loopback); the local server then proxies `/api/*` to it (see `proxy.rs`).
 //!
 //! Lives server-side so BOTH entry points get it identically: the desktop's
 //! in-process server and the standalone `skill-server` binary (browser-local dev, or
@@ -70,7 +71,7 @@ impl SshRemoteControl {
 
 impl RemoteControl for SshRemoteControl {
     fn list_hosts(&self) -> Result<Vec<RemoteHost>, String> {
-        ssh::list_hosts()
+        ssh::list_targets()
     }
 
     fn status(&self) -> RemoteStatus {

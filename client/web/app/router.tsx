@@ -31,6 +31,9 @@ export const router = createHashRouter([
           { path: "commit/:sha", lazy: () => import("@/pages/studio/StudioCommitRoute") },
         ],
       },
+      // Loose-markdown editor: open/edit any .md by absolute path. Standalone (no
+      // StudioContext/git/skill chrome) — it only shares AppShell + the editor.
+      { path: "markdown/:path", lazy: () => import("@/pages/markdown/MarkdownRoute") },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },

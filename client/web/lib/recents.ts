@@ -3,8 +3,13 @@
 import { useSyncExternalStore } from "react";
 
 export interface Recent {
+  /** What was opened: a skill folder, or a loose markdown file's absolute path.
+   *  Also the dedup/identity key. */
   root: string;
   name: string;
+  /** "skill" (default when absent — back-compat with entries saved before loose
+   *  markdown existed) routes via studioPath; "markdown" via markdownPath. */
+  kind?: "skill" | "markdown";
 }
 
 const KEY = "skillviewer-recents";

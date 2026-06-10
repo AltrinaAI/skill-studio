@@ -2,7 +2,7 @@
 
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAutosave } from "./useAutosave";
+import { useAutosave } from "@/components/useAutosave";
 import { useStudio } from "./StudioContext";
 import { agentColor, agentForPath, skillKind } from "@/lib/agents";
 import * as api from "@/lib/api";
@@ -19,7 +19,7 @@ import {
 import type { SkillData } from "@/lib/types";
 import { wordDiff } from "@/lib/wordDiff";
 
-const LiveEditor = lazy(() => import("./LiveEditor"));
+const LiveEditor = lazy(() => import("@/components/LiveEditor"));
 const EditorFallback = () => <div className="py-4 text-sm text-muted">Loading editor…</div>;
 
 interface MetaRow {

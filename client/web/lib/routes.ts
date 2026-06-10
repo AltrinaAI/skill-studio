@@ -18,3 +18,8 @@ export const studioFilePath = (root: string, rel: string) =>
 /** Read-only diff for a commit (a hex SHA) or the working tree ("worktree"). */
 export const studioCommitPath = (root: string, sha: string) =>
   `${studioPath(root)}/commit/${encodeURIComponent(sha)}`;
+
+/** Open a loose markdown file (outside any skill) by its absolute path. The path
+ *  rides as a single encoded `:path` segment, like `studioPath`'s `:root`; the
+ *  router decodes it on read, so consumers use `useParams().path` directly. */
+export const markdownPath = (absPath: string) => `/markdown/${encodeURIComponent(absPath)}`;

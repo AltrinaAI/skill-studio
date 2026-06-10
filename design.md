@@ -124,7 +124,10 @@ becomes a switchboard:
 - `/api/remote/{list,connect,disconnect,status}` is the **connection manager**, always
   handled locally. The impl is `SshRemoteControl` in
   [server/skill-server/src/sshmgr/](server/skill-server/src/sshmgr/) (a `RemoteControl`
-  trait object on `ServerConfig`); it shells out to the system `ssh`.
+  trait object on `ServerConfig`); it shells out to the system `ssh`, or — for a local
+  WSL/WSL2 distro on Windows (`wsl:<distro>` targets, surfaced only when `wsl.exe` lists
+  one) — to `wsl.exe`. A `Transport` enum in `sshmgr/ssh.rs` abstracts the two; everything
+  downstream (provisioning, launch) is identical because a WSL distro is just Linux.
 - While connected, **every other `/api/*` (incl. the `/api/terminal/attach` SSE) is
   reverse-proxied** to the remote `skill-server` over the `ssh -L` tunnel
   ([proxy.rs](server/skill-server/src/proxy.rs)), with the bearer token injected on the
@@ -133,12 +136,16 @@ becomes a switchboard:
   problem entirely (the proxy adds the header; the browser only ever talks same-origin).
 - Non-`/api` GETs always serve the local UI, so the remote binary need not serve it.
 
-The connect flow (VS Code-style): read `~/.ssh/config` → detect remote arch (`uname`) →
-ensure a version-pinned static-musl `skill-server` is installed (remote `curl`/`wget`, or
-a local-download piped over ssh; checksum-verified) → launch it loopback-bound with a
-token delivered via env (off the process table) → ONE `ssh` child is both the tunnel and
-the lifeline (its held stdin EOFs the remote on disconnect/crash, so no orphan; a monitor
-clears the session if it dies). On reaching "connected" the SPA reloads, so the whole
+The connect flow (VS Code-style): list targets (`~/.ssh/config` aliases + any WSL distros)
+→ detect remote arch (`uname`) → ensure a version-pinned static-musl `skill-server` is
+installed (remote `curl`/`wget`, or a local-download piped over the transport;
+checksum-verified) → launch it loopback-bound with a token delivered via env (off the
+process table) → ONE transport child is both the tunnel and the lifeline (its held stdin
+EOFs the remote on disconnect/crash, so no orphan; a monitor clears the session if it
+dies). For ssh the tunnel is `ssh -L`; for WSL there's no `-L` — the distro's loopback is
+shared with Windows (WSL2 `localhostForwarding`/WSL1's shared stack), so the server listens
+on the very port the proxy connects to. WSL scripts are base64-wrapped to stay clear of
+`wsl.exe` command-line quoting. On reaching "connected" the SPA reloads, so the whole
 window rebinds to the remote. Terminals are tmux-backed, so sessions survive reconnects.
 
 **Same code in every server.** The manager lives server-side, so a `skill-server`

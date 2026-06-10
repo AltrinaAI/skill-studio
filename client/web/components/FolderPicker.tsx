@@ -2,18 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { listDir, type DirListing } from "@/lib/api";
-import { FolderIcon } from "./FileIcon";
+import { FileIcon, FolderIcon } from "./FileIcon";
 import { Spinner } from "./ui";
 
-// Browser-mode folder picker: navigates the backend filesystem via /api/list-dir
-// (the native OS dialog isn't available outside the Tauri shell).
+// Browser-mode picker: navigates the backend filesystem via /api/list-dir (the
+// native OS dialog isn't available outside the Tauri shell). Picks a skill FOLDER.
+// If the caller passes `onSelectFile`, markdown files are listed alongside folders
+// too and clicking one opens it — so the one Browse modal handles both a skill and
+// a loose .md, with no separate entry point. Omit it for a folders-only picker.
 export default function FolderPicker({
   onSelect,
   onClose,
+  onSelectFile,
 }: {
+  /** A chosen skill folder. */
   onSelect: (path: string) => void;
   onClose: () => void;
+  /** A chosen markdown file. Providing it opts this picker into listing files. */
+  onSelectFile?: (path: string) => void;
 }) {
+  const allowFiles = !!onSelectFile;
   const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +30,7 @@ export default function FolderPicker({
   const load = (path: string) => {
     setLoading(true);
     setError(null);
-    listDir(path)
+    listDir(path, allowFiles)
       .then((l) => {
         setListing(l);
         setPathInput(l.path);
@@ -94,33 +102,52 @@ export default function FolderPicker({
                   </button>
                 </li>
               )}
-              {listing.entries.map((e) => (
-                <li key={e.name} className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => load(join(e.name))}
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel"
-                  >
-                    <FolderIcon open={false} name={e.name} />
-                    <span className="truncate text-fg">{e.name}</span>
-                    {e.isSkill && (
-                      <span className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[0.65rem] font-medium text-accent">
-                        skill
-                      </span>
-                    )}
-                  </button>
-                  {e.isSkill && (
-                    <button
-                      type="button"
-                      onClick={() => onSelect(join(e.name))}
-                      className="shrink-0 rounded-md px-2 py-1 text-xs text-accent hover:bg-panel"
-                    >
-                      Open
-                    </button>
-                  )}
+              {listing.entries
+                .filter((e) => e.isDir || e.isMarkdown)
+                .map((e) =>
+                  e.isDir ? (
+                    <li key={e.name} className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => load(join(e.name))}
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel"
+                      >
+                        <FolderIcon open={false} name={e.name} />
+                        <span className="truncate text-fg">{e.name}</span>
+                        {e.isSkill && (
+                          <span className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[0.65rem] font-medium text-accent">
+                            skill
+                          </span>
+                        )}
+                      </button>
+                      {e.isSkill && (
+                        <button
+                          type="button"
+                          onClick={() => onSelect(join(e.name))}
+                          className="shrink-0 rounded-md px-2 py-1 text-xs text-accent hover:bg-panel"
+                        >
+                          Open
+                        </button>
+                      )}
+                    </li>
+                  ) : (
+                    <li key={e.name}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectFile?.(join(e.name))}
+                        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel"
+                      >
+                        <FileIcon name={e.name} />
+                        <span className="truncate text-fg">{e.name}</span>
+                      </button>
+                    </li>
+                  ),
+                )}
+              {listing.entries.filter((e) => e.isDir || e.isMarkdown).length === 0 && (
+                <li className="px-2 py-3 text-sm text-muted">
+                  {allowFiles ? "No folders or markdown files here." : "No subfolders."}
                 </li>
-              ))}
-              {listing.entries.length === 0 && <li className="px-2 py-3 text-sm text-muted">No subfolders.</li>}
+              )}
             </ul>
           ) : null}
         </div>

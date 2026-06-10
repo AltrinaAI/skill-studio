@@ -1,35 +1,24 @@
-//! The SSH session lifecycle. A SINGLE `ssh` child both launches the remote server
-//! (holding its stdin as a lifeline) and forwards a local port to it
-//! (`-L L:127.0.0.1:R`). The client chooses R, sidestepping the "`-L` needs the port
-//! before the server picks it" chicken-and-egg, and retries on a port collision. One
-//! child ⇒ one auth; killing it — or the desktop dying, which closes the held stdin
+//! The remote session lifecycle. A SINGLE transport child (`ssh` or `wsl.exe`) both
+//! launches the remote server (holding its stdin as a lifeline) and reaches a local port
+//! on it: ssh forwards `-L L:127.0.0.1:R` (the client chooses R, sidestepping the "`-L`
+//! needs the port before the server picks it" chicken-and-egg, and retries on a port
+//! collision); WSL needs no forward — its loopback is shared with Windows, so L == R.
+//! One child ⇒ one auth; killing it — or the desktop dying, which closes the held stdin
 //! pipe — EOFs the remote server's stdin so it self-exits (no orphan), and the
 //! forward dies with the same process.
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{RemoteStatus, RemoteTarget};
 
+use super::ssh::Transport;
 use super::{provision, set_stage, State};
 
-const COMMON_OPTS: &[&str] = &[
-    "-o", "BatchMode=yes",
-    "-o", "ConnectTimeout=15",
-    // accept-new = trust-on-first-use: a host not yet in known_hosts is auto-pinned
-    // (no prompt under BatchMode), but a CHANGED key is still rejected. Intentional —
-    // matches VS Code Remote-SSH's first-contact behaviour; hosts you've ssh'd to
-    // before are already pinned in your known_hosts and get full strict checking.
-    "-o", "StrictHostKeyChecking=accept-new",
-    "-o", "ExitOnForwardFailure=yes",
-    "-o", "ServerAliveInterval=15",
-    "-o", "ServerAliveCountMax=3",
-];
-
-/// A live connection: the `ssh` child (lifeline + tunnel) and the forwarded local port.
+/// A live connection: the transport child (lifeline + tunnel) and the forwarded local port.
 pub struct Session {
     pub local_port: u16,
     pub token: String,
@@ -52,7 +41,8 @@ impl Session {
 /// Run the whole connect flow on a background thread, then store the result — unless
 /// a disconnect or newer connect superseded it (tracked by `generation`).
 pub fn run_connect(state: Arc<Mutex<State>>, host: String, generation: u64, app_version: String) {
-    let result = connect_flow(&state, &host, generation, &app_version);
+    let transport = Transport::parse(&host);
+    let result = connect_flow(&state, &transport, &host, generation, &app_version);
     let mut s = state.lock().unwrap();
     if s.generation != generation {
         // Superseded — discard, tearing down any session we just built.
@@ -115,19 +105,25 @@ fn spawn_monitor(state: Arc<Mutex<State>>, generation: u64, host: String, child:
     });
 }
 
-fn connect_flow(state: &Arc<Mutex<State>>, host: &str, generation: u64, app_version: &str) -> Result<Session, String> {
+fn connect_flow(
+    state: &Arc<Mutex<State>>,
+    transport: &Transport,
+    host: &str,
+    generation: u64,
+    app_version: &str,
+) -> Result<Session, String> {
     set_stage(state, generation, "detecting", host, "Detecting the remote platform…");
-    let platform = provision::detect(host)?;
+    let platform = provision::detect(transport)?;
 
     set_stage(state, generation, "installing", host, "Installing skill-server on the remote…");
-    let bin = provision::ensure_installed(host, &platform, app_version)?;
+    let bin = provision::ensure_installed(transport, &platform, app_version)?;
 
     set_stage(state, generation, "launching", host, "Starting the remote server…");
     let token = new_token();
     let mut last_err = String::new();
     // A few attempts to dodge a remote/local port collision (R is client-chosen).
     for attempt in 0..4u32 {
-        match launch(host, &bin, &token, attempt) {
+        match launch(transport, host, &bin, &token, attempt) {
             Ok(session) => return Ok(session),
             Err(LaunchError::PortConflict(e)) => last_err = e,
             Err(LaunchError::Fatal(e)) => return Err(e),
@@ -143,9 +139,11 @@ enum LaunchError {
     Fatal(String),
 }
 
-fn launch(host: &str, bin: &str, token: &str, attempt: u32) -> Result<Session, LaunchError> {
+fn launch(transport: &Transport, host: &str, bin: &str, token: &str, attempt: u32) -> Result<Session, LaunchError> {
     let local_port = free_local_port().map_err(LaunchError::Fatal)?;
-    let remote_port = pick_remote_port(attempt);
+    // WSL shares the loopback with Windows, so the server listens on the same port the
+    // client connects to (no `-L`). For ssh, R is client-chosen and forwarded.
+    let remote_port = if transport.same_port() { local_port } else { pick_remote_port(attempt) };
     // The token is delivered via an ENV VAR (not argv) so it never appears in the
     // remote process's world-readable command line (/proc/<pid>/cmdline) — other
     // users on a shared remote host can't read it from the process table. `bin` is
@@ -154,20 +152,16 @@ fn launch(host: &str, bin: &str, token: &str, attempt: u32) -> Result<Session, L
         "SKILL_STUDIO_SERVER_TOKEN={token} exec \"{bin}\" --host 127.0.0.1 --port {remote_port} --lifeline-stdin"
     );
 
-    // `--` ends ssh option parsing so a host that begins with `-` can never be read as
-    // an option (e.g. -oProxyCommand=…). The API also validates the host up front.
-    let mut child = Command::new("ssh")
-        .args(COMMON_OPTS)
-        .arg("-L")
-        .arg(format!("{local_port}:127.0.0.1:{remote_port}"))
-        .arg("--")
-        .arg(host)
-        .arg(&remote_cmd)
+    // The transport builds the right invocation: ssh with `-L` (and `--` so a host
+    // beginning with `-` can't be read as an option), or `wsl.exe` with the script
+    // base64-wrapped. The API also validates the host/distro up front.
+    let mut child = transport
+        .launch_command(&remote_cmd, local_port, remote_port)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| LaunchError::Fatal(format!("failed to run ssh: {e} (is OpenSSH installed?)")))?;
+        .map_err(|e| LaunchError::Fatal(format!("failed to start the remote connection: {e}")))?;
 
     let stdin = child.stdin.take().unwrap(); // HOLD = lifeline
     let stdout = child.stdout.take().unwrap();
