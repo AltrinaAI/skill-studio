@@ -137,6 +137,16 @@ jobs:
         shell: bash
         run: bash scripts/stamp-version.sh "${GITHUB_REF_NAME#v}"
 
+      # Fail in seconds, not after four full builds: a bundle carrying the
+      # placeholder pubkey could never verify any update signature.
+      - name: Guard updater pubkey
+        shell: bash
+        run: |
+          if grep -q UPDATER_PUBKEY_PLACEHOLDER client/desktop/tauri.conf.json; then
+            echo "plugins.updater.pubkey is still the placeholder — commit the real public key first" >&2
+            exit 1
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,12 +157,20 @@ jobs:
           # macOS signing / notarization (add as repo secrets when ready):
           # APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
           # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+          # Updater artifact signing (minisign .sig files, separate from OS code
+          # signing). Unset password defaults to empty on CI.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: client/desktop
           tagName: ${{ github.ref_name }}
           releaseName: "Skill Studio ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
+          # latest.json's platforms map is merged across the 4 parallel matrix legs
+          # (re-download + retry on asset-id conflicts), so retries matter here.
+          includeUpdaterJson: true
+          retryAttempts: 3
           # Per-platform args (&& / || precedence: each `A && B` resolves before the `||`s):
           #  • Linux → `--bundles deb`: ship only the .deb and SKIP AppImage. Tauri's
           #    AppImage bundler (linuxdeploy) is currently flaky on GitHub runners — it
@@ -160,9 +178,11 @@ jobs:
           #    and a failed AppImage fails the whole job, so the working .deb never
           #    uploads. The .deb is a fine Ubuntu/Debian installer; re-enable AppImage by
           #    dropping this branch once upstream is fixed (the env var above is kept ready).
-          #  • Windows ships UNSIGNED for now (no cert): --no-sign skips signing entirely.
-          #    Re-enable by dropping the `--no-sign` branch (signCommand + script are kept).
-          args: ${{ matrix.platform == 'macos-15-intel' && '--target x86_64-apple-darwin' || matrix.platform == 'windows-latest' && '--no-sign' || startsWith(matrix.platform, 'ubuntu') && '--bundles deb' || '' }}
+          #  • Windows ships UNSIGNED for now: no signCommand/cert is configured
+          #    (signCommand was removed from tauri.conf.json; --no-sign was dropped
+          #    because it also suppressed the updater .sig files). Re-enable
+          #    Authenticode by restoring signCommand + the cert secrets.
+          args: ${{ matrix.platform == 'macos-15-intel' && '--target x86_64-apple-darwin' || startsWith(matrix.platform, 'ubuntu') && '--bundles deb' || '' }}
 
       - name: Upload desktop bundles
         if: ${{ always() && github.event_name == 'workflow_dispatch' }}

@@ -6,6 +6,7 @@
 // terminal lifecycle (the in-process server runs with `startup_maintenance:false`,
 // so these fire exactly once), and reap on exit.
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_updater::UpdaterExt;
 
 use skill_core::engine;
 use skill_server::{init_logging, init_logging_to_file, ServerConfig, SshRemoteControl};
@@ -42,6 +43,70 @@ fn find_bundled_engine(app: &tauri::App) -> Option<std::path::PathBuf> {
     order.into_iter().find_map(look)
 }
 
+/// The shell's half of `skill_core::update`: the server module owns the
+/// `/api/update/*` surface and the version check; only this process can replace
+/// its own binary, so download/install runs here via `tauri-plugin-updater`.
+struct ShellUpdater {
+    app: tauri::AppHandle,
+    remote_slot: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<SshRemoteControl>>>,
+}
+
+impl skill_core::update::UpdateControl for ShellUpdater {
+    fn can_install(&self) -> bool {
+        // The plugin installs every target we ship (dmg-app, NSIS, deb/AppImage);
+        // failures surface via report_error and the UI offers a manual download.
+        true
+    }
+
+    fn begin_install(&self) {
+        let app = self.app.clone();
+        let remote_slot = self.remote_slot.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(msg) = install_update(app, remote_slot).await {
+                skill_core::update::report_error(msg);
+            }
+        });
+    }
+}
+
+/// Download → install → relaunch. On Windows the plugin hands off to the NSIS
+/// installer and exits this process itself — `RunEvent::Exit` never fires — so
+/// `on_before_exit` must repeat the Exit handler's teardown. macOS/Linux installs
+/// return, and we restart explicitly.
+async fn install_update(
+    app: tauri::AppHandle,
+    remote_slot: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<SshRemoteControl>>>,
+) -> Result<(), String> {
+    let updater = app
+        .updater_builder()
+        .on_before_exit(move || {
+            if let Some(r) = remote_slot.get() {
+                r.shutdown();
+            }
+            engine::shutdown();
+        })
+        .build()
+        .map_err(|e| format!("The updater could not start: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("Couldn't check for the update: {e}"))?
+        .ok_or_else(|| "The update is no longer available.".to_string())?;
+    let mut received: u64 = 0;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                received += chunk as u64;
+                let pct = total.filter(|t| *t > 0).map(|t| (received * 100 / t).min(100) as u8);
+                skill_core::update::report_progress(pct);
+            },
+            || skill_core::update::report_ready(),
+        )
+        .await
+        .map_err(|e| format!("Couldn't install the update: {e}"))?;
+    app.restart() // macOS/Linux: relaunch into the new build (Windows exited above)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The SSH connection manager is created in `setup` (it needs the app version to
@@ -51,6 +116,7 @@ pub fn run() {
         std::sync::Arc::new(std::sync::OnceLock::new());
     let remote_slot_setup = remote_slot.clone();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build()) // self-update; driven from ShellUpdater, no JS API
         .setup(move |app| {
             // Logger first, so even early startup is captured. Tee to a small on-disk
             // file (durable for the packaged app, where stderr goes nowhere) + stderr
@@ -104,6 +170,11 @@ pub fn run() {
                 startup_maintenance: false,
                 // Plug the SSH connection manager into the local switchboard.
                 remote: Some(remote.clone() as std::sync::Arc<dyn skill_server::RemoteControl>),
+                // Hand the server's update module its installer (see ShellUpdater).
+                updater: Some(std::sync::Arc::new(ShellUpdater {
+                    app: app.handle().clone(),
+                    remote_slot: remote_slot_setup.clone(),
+                }) as std::sync::Arc<dyn skill_core::update::UpdateControl>),
                 ..Default::default()
             };
             let port = match skill_server::spawn(cfg) {
@@ -127,6 +198,16 @@ pub fn run() {
                 .title("Skill Studio")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(720.0, 480.0)
+                // `target="_blank"` links (release page, GitHub device flow) must
+                // open in the SYSTEM browser — wry's default silently drops them.
+                .on_new_window(|url, _features| {
+                    if matches!(url.scheme(), "http" | "https") {
+                        if let Err(e) = open::that_detached(url.as_str()) {
+                            log::warn!("couldn't open {url} in the system browser: {e}");
+                        }
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                })
                 .build()?;
             Ok(())
         })

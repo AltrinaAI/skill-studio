@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::thread;
 
 use serde_json::{json, Value};
-use skill_core::{commitmsg, discover, engine, github, gitops, mining, secrets, skill, sync};
+use skill_core::{commitmsg, discover, engine, github, gitops, mining, secrets, skill, sync, update};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 mod proxy;
@@ -190,6 +190,10 @@ pub struct ServerConfig {
     /// remoting (the standalone binary, or browser-local dev). When set, the server
     /// serves `/api/remote/*` and proxies the rest of `/api/*` to the connected remote.
     pub remote: Option<Arc<dyn RemoteControl>>,
+    /// The app's installer (desktop only) — `spawn` hands it to
+    /// `skill_core::update::init`, which runs the background release check.
+    /// `None` (standalone/dev) = `/api/update/status` reports `canAuto: false`.
+    pub updater: Option<Arc<dyn update::UpdateControl>>,
 }
 
 impl Default for ServerConfig {
@@ -204,6 +208,7 @@ impl Default for ServerConfig {
             workers: 4,
             startup_maintenance: true,
             remote: None,
+            updater: None,
         }
     }
 }
@@ -253,6 +258,11 @@ pub fn spawn(cfg: ServerConfig) -> std::io::Result<ServerHandle> {
         skill_term::sweep_stale();
         engine::reap_orphans();
         engine::prefetch_model();
+    }
+
+    if let Some(control) = cfg.updater {
+        // The workspace version is stamped to the release tag, same as the desktop.
+        update::init(control, env!("CARGO_PKG_VERSION"));
     }
 
     let ctx = Arc::new(ServerCtx {
@@ -333,6 +343,16 @@ fn worker_loop(server: &Server, ctx: &ServerCtx) {
                 let _ = request.as_reader().read_to_string(&mut body);
             }
             send_reply(request, client_log(&body));
+            continue;
+        }
+        // App auto-update — ALWAYS handled locally (never proxied): it's THIS
+        // desktop's own update state, not the connected remote's.
+        if path.starts_with("/api/update/") {
+            let mut body = String::new();
+            if method == Method::Post {
+                let _ = request.as_reader().read_to_string(&mut body);
+            }
+            send_reply(request, handle(&method, &url, &body, ctx));
             continue;
         }
         // While a remote is connected, every other /api/* is reverse-proxied to it.
@@ -823,6 +843,11 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
         (Method::Post, "/api/github/auto-pull") => json_reply(github::auto_pull(&s("root"))),
         (Method::Post, "/api/github/unlink") => {
             json_reply(github::unlink(&s("root")).map(|_| json!({ "ok": true })))
+        }
+        // --- app auto-update (always served locally — see worker_loop) ---
+        (Method::Get, "/api/update/status") => json_reply(Ok(update::status())),
+        (Method::Post, "/api/update/apply") => {
+            json_reply(update::apply().map(|_| json!({ "ok": true })))
         }
         (Method::Get, "/api/secrets-status") => json_reply(secrets::secrets_status()),
         (Method::Get, "/api/secrets-list") => json_reply(secrets::secrets_list()),

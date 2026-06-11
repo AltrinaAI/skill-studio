@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Spinner } from "@/components/ui";
 import TerminalsHost from "@/pages/terminals/TerminalsHost";
+import UpdateBanner from "@/components/UpdateBanner";
 import { useDiscardBlocker } from "./routeGuard";
 
 /**
@@ -23,6 +24,7 @@ export default function AppShell() {
         </Suspense>
       </div>
       <TerminalsHost active={onTerminals} />
+      <UpdateBanner />
     </>
   );
 }

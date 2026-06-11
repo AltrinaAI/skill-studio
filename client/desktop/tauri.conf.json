@@ -24,9 +24,16 @@
       "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/AltrinaAI/skills-studio/releases/latest/download/latest.json"],
+      "pubkey": "UPDATER_PUBKEY_PLACEHOLDER_REPLACE_BEFORE_TAGGING"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg", "app", "deb", "appimage"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,18 +50,7 @@
     },
     "macOS": { "minimumSystemVersion": "10.15", "signingIdentity": "-" },
     "windows": {
-      "nsis": { "installMode": "perMachine", "installerIcon": "icons/icon.ico" },
-      "signCommand": {
-        "cmd": "pwsh",
-        "args": [
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          "scripts/sign-windows.ps1",
-          "%1"
-        ]
-      }
+      "nsis": { "installMode": "perMachine", "installerIcon": "icons/icon.ico" }
     }
   }
 }

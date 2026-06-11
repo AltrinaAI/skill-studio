@@ -15,3 +15,4 @@ pub mod remotesync;
 pub mod secrets;
 pub mod skill;
 pub mod sync;
+pub mod update;

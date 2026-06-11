@@ -115,6 +115,29 @@ export const remoteStatus = () => http<RemoteStatus>("GET", "remote/status");
 export const remoteConnect = (host: string) => http<{ ok: boolean }>("POST", "remote/connect", { host });
 export const remoteDisconnect = () => http<{ ok: boolean }>("POST", "remote/disconnect");
 
+// --- app auto-update (the server checks GitHub releases; the desktop shell installs) ---
+export interface UpdateAvailable {
+  version: string;
+  notes: string | null;
+  date: string | null;
+}
+export interface UpdateStatus {
+  /** The server's own version. */
+  current: string;
+  /** The strictly-newer release on offer, or null when up to date. */
+  available: UpdateAvailable | null;
+  /** This server can install the update itself (the desktop shell); when false
+   *  the user downloads from `releaseUrl` manually. */
+  canAuto: boolean;
+  phase: "idle" | "downloading" | "ready" | "error";
+  /** Download percentage while `phase` is "downloading", when known. */
+  progress: number | null;
+  error: string | null;
+  releaseUrl: string;
+}
+export const updateStatus = () => http<UpdateStatus>("GET", "update/status");
+export const updateApply = () => http<{ ok: boolean }>("POST", "update/apply");
+
 // --- composed helpers ---
 export async function loadSkill(path: string): Promise<SkillData> {
   const r = await readSkillRaw(path);

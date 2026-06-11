@@ -23,6 +23,15 @@ skill-server = { path = "../../server/skill-server" }
 # Logging facade for the shell's own diagnostics; the subscriber comes from
 # `skill_server::init_logging()`, so no `env_logger` dependency is needed here.
 log = "0.4"
+# Self-update download/install (dmg-app, NSIS, deb/AppImage). Pure-Rust use,
+# driven by `ShellUpdater` — no JS API, so no capability entries are needed.
+tauri-plugin-updater = "2"
+# `tauri::generate_context!` emits `::serde_json` once tauri.conf.json has a
+# `plugins` section, so the macro needs it as a direct dependency.
+serde_json = "1"
+# System-browser opens for `target="_blank"` links (release page, GitHub device
+# flow) — wry's default new-window handling silently drops them.
+open = "5"
 
 [profile.release]
 panic = "abort"
