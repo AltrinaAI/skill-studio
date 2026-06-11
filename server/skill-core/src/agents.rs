@@ -54,6 +54,9 @@ pub struct ResumeCtx<'a> {
     pub effort: Option<&'a str>,
 }
 
+/// Drop helper files the trigger line needs into the run dir.
+pub type PrepareFn = fn(&Path) -> Result<(), String>;
+
 pub struct AgentDef {
     /// Family id — the prefix of skill-term agent ids ("claude" in "claude:cli").
     pub family: &'static str,
@@ -62,8 +65,7 @@ pub struct AgentDef {
     pub skills_dirs: &'static [&'static str],
     /// Whether the agent also reads [`SHARED_SKILLS_DIRS`].
     pub reads_shared: bool,
-    /// Drop helper files the trigger line needs into the run dir.
-    pub prepare: Option<fn(&Path) -> Result<(), String>>,
+    pub prepare: Option<PrepareFn>,
     pub trigger: Option<fn(&TriggerCtx) -> String>,
     pub resume: Option<fn(&ResumeCtx) -> String>,
 }
