@@ -27,7 +27,7 @@
   "plugins": {
     "updater": {
       "endpoints": ["https://github.com/AltrinaAI/skills-studio/releases/latest/download/latest.json"],
-      "pubkey": "UPDATER_PUBKEY_PLACEHOLDER_REPLACE_BEFORE_TAGGING"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1ODBFMTJBQzc2RUQwM0QKUldROTBHN0hLdUdBVmJhUnducHhzMzd1NkZzeWRWbnhjSzRRdGlYcjlyQjFTbW1JNXlhNWFYS0gK"
     }
   },
   "bundle": {
