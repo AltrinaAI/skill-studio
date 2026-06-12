@@ -9,7 +9,6 @@ import { armDiscardBypass, holdAutosave, releaseAutosave } from "@/lib/editorSta
 import TopBar from "./TopBar";
 import Sidebar from "./Sidebar";
 import PreviewBanner from "./PreviewBanner";
-import MinedBanner from "./MinedBanner";
 import AgentPanel from "./AgentPanel";
 import { useMining } from "@/lib/mining";
 import DiffOverlays from "./DiffOverlays";
@@ -81,18 +80,17 @@ export default function StudioLayout() {
   const [exportOpen, setExportOpen] = useState(false);
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
 
-  // The side-panel agent conversation. Skills that came out of the last mining
-  // run open with the panel already showing — the conversation that proposed
-  // them is the natural companion for reviewing. Manual close is respected for
-  // the rest of the visit (the ref gates the auto-open to once per mount).
+  // The side-panel agent conversation. Proposed skills (staged under
+  // generated-skills/) open with the panel already showing — the conversation
+  // that proposed them is the natural companion for reviewing. Manual close is
+  // respected for the rest of the visit (the ref gates the auto-open to once
+  // per mount).
   const [agentOpen, setAgentOpen] = useState(false);
   const mining = useMining();
   const autoOpenedAgent = useRef(false);
   useEffect(() => {
     if (autoOpenedAgent.current || !mining?.terminalId) return;
-    const fromMining =
-      data.root.includes("/generated-skills/") || (mining.improved ?? []).includes(data.root);
-    if (fromMining) {
+    if (data.root.includes("/generated-skills/")) {
       autoOpenedAgent.current = true;
       setAgentOpen(true);
     }
@@ -177,7 +175,6 @@ export default function StudioLayout() {
         onExport={onExport}
       />
       <PreviewBanner />
-      <MinedBanner />
       <div className="flex min-h-0 flex-1">
         <Sidebar data={data} selected={selected} onSelect={onSelect} onDelete={onDelete} />
         {/* The scroll pane (main) + the change overview ruler on its right edge.

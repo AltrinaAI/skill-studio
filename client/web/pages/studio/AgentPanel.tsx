@@ -41,9 +41,7 @@ export default function AgentPanel({ onClose }: { onClose: () => void }) {
     saveStudioLayout({ agentW: w });
   }, []);
 
-  const miningRelated =
-    mining?.terminalId != null &&
-    (data.root.includes("/generated-skills/") || (mining.improved ?? []).includes(data.root));
+  const miningRelated = mining?.terminalId != null && data.root.includes("/generated-skills/");
 
   // A mined skill's panel opens on the conversation that proposed it; the
   // server returns its live terminal or revives the recorded session.

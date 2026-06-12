@@ -400,7 +400,6 @@ function MineCard({
   onStop,
   onWatch,
   onContinue,
-  onOpen,
   onDetails,
 }: {
   mining: MineState | null;
@@ -409,12 +408,10 @@ function MineCard({
   onStop: () => void;
   onWatch: () => void;
   onContinue: () => Promise<void>;
-  onOpen: (p: string) => void;
   onDetails: () => void;
 }) {
   const running = mining?.status === "running";
   const hasRun = mining != null && mining.status !== "idle";
-  const improved = mining?.improved ?? [];
   const [continuing, setContinuing] = useState(false);
   const description = (
     <p className="text-xs leading-relaxed text-muted">Analyze your past conversations to create / update skills</p>
@@ -495,25 +492,6 @@ function MineCard({
           {description}
           {actions}
         </>
-      )}
-      {improved.length > 0 && (
-        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pt-1 text-xs text-muted">
-          Changed
-          {improved.map((root) => (
-            <button
-              key={root}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpen(root);
-              }}
-              className="rounded-md bg-panel px-1.5 py-0.5 font-mono text-[0.7rem] text-fg hover:text-accent"
-            >
-              {baseName(root)}
-            </button>
-          ))}
-          <span className="text-faint">— review &amp; save.</span>
-        </p>
       )}
     </section>
   );
@@ -836,7 +814,6 @@ export function Component() {
               onStop={() => void stopMining()}
               onWatch={() => navigate(terminalsPath(mining?.terminalId))}
               onContinue={continueMining}
-              onOpen={onOpen}
               onDetails={() => navigate(miningPath())}
             />
           </section>

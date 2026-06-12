@@ -12,9 +12,9 @@
 //
 // The judgment work (cluster, judge, author) is the agent's, per the skill's
 // own instructions; this module owns the run lifecycle around it: refresh the
-// installed copy of the skill, snapshot which skills were already dirty (so
-// mined edits are attributable), compose the run prompt, and report progress
-// by watching the run dir's artifacts.
+// installed copy of the skill, compose the run prompt, and report progress by
+// watching the run dir's artifacts. Mined edits get no special attribution —
+// a change is a change, surfaced by the ordinary dirty/review machinery.
 //
 // skill-term depends on this crate, so this module cannot spawn terminals
 // itself; the route layer (skill-server) passes the spawn/alive/kill
@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agents::{self, LaunchCtx};
 use crate::sync::install_skill;
-use crate::{discover, gitops, secrets};
+use crate::secrets;
 
 /// Where the miner's transcript adapters look, mirrored here only to give the
 /// source-picker honest per-agent session counts (a cheap mtime walk — the
@@ -43,13 +43,6 @@ pub struct MineSource {
     pub label: String,
     /// Transcript files modified within the window.
     pub sessions: usize,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct Candidate {
-    root: String,
-    dirty: bool,
 }
 
 /// The persisted record of the (single, most recent) run.
@@ -76,9 +69,6 @@ struct RunRecord {
     /// "running" (the TUI is up in the recorded terminal) | "ended" (sticky:
     /// the terminal or the agent in it is gone; revivals don't reopen it).
     status: String,
-    /// Every personal skill at run start with its dirty flag: the fixed set we
-    /// re-check to attribute in-place edits to the run (user WIP stays out).
-    candidates: Vec<Candidate>,
 }
 
 #[derive(Serialize)]
@@ -109,9 +99,6 @@ pub struct MineState {
     pub days: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<String>>,
-    /// Existing skills the run dirtied (clean at start, dirty now). Self-
-    /// clearing: once the user saves a version or discards, the root drops out.
-    pub improved: Vec<String>,
 }
 
 fn mining_dir() -> Result<PathBuf, String> {
@@ -267,17 +254,6 @@ pub struct PreparedRun {
     days: u64,
     sources: Vec<String>,
     improve: bool,
-    candidates: Vec<Candidate>,
-}
-
-/// Snapshot the dirty flag of every personal skill: dirty ones are off-limits
-/// to the run (user WIP), and clean ones that turn dirty are the run's edits.
-fn dirty_candidates() -> Vec<Candidate> {
-    let roots = discover::personal_roots();
-    gitops::git_dirty_many(&roots)
-        .into_iter()
-        .map(|d| Candidate { root: d.root, dirty: d.dirty })
-        .collect()
 }
 
 fn default_sources(sources: &[String]) -> Vec<String> {
@@ -294,10 +270,10 @@ pub fn preview_prompt(days: u64, improve: bool) -> Result<String, String> {
     Ok(compose_prompt(days, improve))
 }
 
-/// Set up a run: install the skill-miner where missing, snapshot the dirty
-/// set, reset the run dir, and compose the agent prompt (or take the dialog's
-/// edited `prompt_override` verbatim). The caller spawns the terminal and then
-/// calls [`record_run`].
+/// Set up a run: install the skill-miner where missing, reset the run dir,
+/// and compose the agent prompt (or take the dialog's edited
+/// `prompt_override` verbatim). The caller spawns the terminal and then calls
+/// [`record_run`].
 pub fn prepare_run(
     agent_family: &str,
     days: u64,
@@ -315,8 +291,6 @@ pub fn prepare_run(
     let home = dirs::home_dir().ok_or_else(|| "Cannot locate home directory.".to_string())?;
 
     ensure_installed_in(&home, bundled_miner)?;
-
-    let candidates = dirty_candidates();
 
     // Reset the single retained run dir.
     let rdir = run_dir()?;
@@ -336,7 +310,6 @@ pub fn prepare_run(
         days,
         sources,
         improve,
-        candidates,
     })
 }
 
@@ -401,7 +374,6 @@ pub fn record_run(
         terminal_id: terminal_id.to_string(),
         continued_unix: 0,
         status: "running".into(),
-        candidates: prep.candidates,
     };
     let _guard = run_lock();
     save_run(&rec)?;
@@ -480,7 +452,6 @@ fn state_inner(
             effort: None,
             days: None,
             sources: None,
-            improved: Vec::new(),
         });
     };
     let rdir = run_dir()?;
@@ -508,16 +479,6 @@ fn state_inner(
     });
     let found = count_lines(&rdir.join("out/inventory.jsonl"));
 
-    // In-place edits attributable to the run: clean at start, dirty now. The
-    // check stays cheap because the candidate list is fixed at run start.
-    let clean_at_start: Vec<String> =
-        rec.candidates.iter().filter(|c| !c.dirty).map(|c| c.root.clone()).collect();
-    let improved: Vec<String> = gitops::git_dirty_many(&clean_at_start)
-        .into_iter()
-        .filter(|d| d.dirty)
-        .map(|d| d.root)
-        .collect();
-
     Ok(MineState {
         status: rec.status.clone(),
         stage,
@@ -529,7 +490,6 @@ fn state_inner(
         effort: Some(rec.effort.clone()),
         days: Some(rec.days),
         sources: Some(rec.sources.clone()),
-        improved,
     })
 }
 

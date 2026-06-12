@@ -732,8 +732,6 @@ export interface MineState {
   effort?: string;
   days?: number;
   sources?: string[];
-  /** Existing skills the run dirtied — clears once committed or discarded. */
-  improved: string[];
 }
 
 /** One file in the current run dir (the single retained run). */

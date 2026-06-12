@@ -208,15 +208,8 @@ export function Component() {
               <Fact label="Effort" value={mining.effort || "Default"} />
               <Fact label="Window" value={mining.days != null ? `Last ${mining.days} days` : "—"} />
             </dl>
-            {(mining.improved.length > 0 || (mining.sources?.length ?? 0) > 0) && (
-              <p className="mt-3 text-xs text-muted">
-                Sources: {mining.sources?.join(", ") || "—"}
-                {mining.improved.length > 0 && (
-                  <>
-                    {" · "}Changed {mining.improved.length} skill{mining.improved.length === 1 ? "" : "s"}
-                  </>
-                )}
-              </p>
+            {(mining.sources?.length ?? 0) > 0 && (
+              <p className="mt-3 text-xs text-muted">Sources: {mining.sources?.join(", ")}</p>
             )}
           </section>
         )}
