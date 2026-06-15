@@ -87,12 +87,9 @@ jobs:
       - run: npm ci
       - name: Build SPA (tauri-build needs frontendDist)
         run: npm run build
-      # The on-device llama.cpp engine is a declared bundle resource
-      # (client/desktop/binaries/) but is gitignored and only vendored at release
-      # (scripts/fetch-engine.sh). tauri-build aborts if the path is missing even on
-      # `cargo check`, so stub it — a check doesn't bundle, it just needs it to exist.
-      - name: Stub the engine resource dir
-        run: mkdir -p client/desktop/binaries && touch client/desktop/binaries/.keep
+      # The on-device llama.cpp engine is no longer a bundle resource (commit-message
+      # drafting shells out to a logged-in coding-agent CLI by default), so there's
+      # nothing to stub before the desktop `cargo check`.
       - name: cargo check (desktop shell)
         working-directory: client/desktop
         run: cargo check --locked

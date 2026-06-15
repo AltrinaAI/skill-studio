@@ -1,11 +1,14 @@
-//! Generate a Conventional-Commits message from a skill's uncommitted diff,
-//! using the on-device `engine`. Transport-agnostic: reached over `/api` by
-//! `skill-server` (in-process in the desktop, or standalone on a remote host).
+//! Draft a one-line message from a skill's uncommitted diff. This is the POLICY
+//! layer — diff prep, the per-diff cache, post-processing, and debug logging; the
+//! actual generation is delegated to `commit_agent`, which picks a backend (a
+//! logged-in coding-agent CLI by default, the on-device engine when opted in).
+//! Transport-agnostic: reached over `/api` by `skill-server` (in-process in the
+//! desktop, or standalone on a remote host).
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::engine::{self, ChatMessage};
+use crate::commit_agent;
 use crate::gitops;
 
 /// Diff bytes we put into the prompt. The worktree diff is capped at 2 MB
@@ -51,26 +54,13 @@ pub fn regenerate(root: &str) -> Result<String, String> {
     run(root, &diff, hash, next_seed(), 1.0)
 }
 
-/// Shared generation core: minimal prompt (analyse first, then commit, via the
-/// structured `analysis`/`commit_message` schema) → model → parse → cache.
-///
-/// Structured output forces the model to reason in `analysis` BEFORE the
-/// `commit_message` (schema field order = generation order), which makes it
-/// actually read the diff instead of anchoring on the top. These are version
-/// notes for a skill author, NOT code commits: a plain one-line description with
-/// no `feat:`/`fix:`/type prefix.
+/// Shared generation core: truncate the diff → `commit_agent` (backend of the
+/// day) → post-process → cache. These are version notes for a skill author, NOT
+/// code commits: a plain one-line description with no `feat:`/`fix:`/type prefix.
 fn run(root: &str, diff: &str, hash: u64, seed: i64, temperature: f32) -> Result<String, String> {
-    let prompt = format!(
-        "Analyze the following git diff in no more than 100 words, then write a short commit message. \
-The message must be one short, plain-English sentence describing what changed — with no \
-\"feat:\"/\"fix:\"/type prefix and no filename prefix, just the description.\n\nDiff:\n{}",
-        truncate_on_boundary(diff, MAX_PROMPT_DIFF_BYTES)
-    );
-    let messages = vec![ChatMessage::new("user", prompt)];
-
-    let raw = engine::chat(&messages, temperature, seed, Some(commit_schema()))?;
-    let msg = post_process(&extract_commit_message(&raw));
-    debug_log(root, &messages, &raw, &msg);
+    let g = commit_agent::generate(truncate_on_boundary(diff, MAX_PROMPT_DIFF_BYTES), seed, temperature)?;
+    let msg = post_process(&g.text);
+    debug_log(root, diff, &g, &msg);
     if msg.is_empty() {
         return Err("The AI didn't produce a usable message — try again.".into());
     }
@@ -132,55 +122,21 @@ fn store_cached(root: &str, hash: u64, message: &str) {
     }
 }
 
-/// The JSON-schema `response_format` passed to the engine: an `analysis` (the
-/// model's reasoning, generated first because it's listed first) followed by the
-/// `commit_message`. Constraining to this schema is what guarantees the model
-/// thinks before it writes — and that we can parse the result.
-fn commit_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "json_schema",
-        "json_schema": {
-            "name": "commit",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "analysis": { "type": "string", "maxLength": 700 },
-                    "commit_message": { "type": "string" }
-                },
-                "required": ["analysis", "commit_message"],
-                "additionalProperties": false
-            }
-        }
-    })
-}
-
-/// Pull `commit_message` out of the model's structured JSON reply. Falls back to
-/// the raw text if it somehow isn't the expected JSON (grammar-constrained output
-/// makes that unlikely, but we never want to surface a raw JSON blob to the user).
-fn extract_commit_message(raw: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .and_then(|v| v.get("commit_message").and_then(|m| m.as_str()).map(|s| s.to_string()))
-        .unwrap_or_else(|| raw.to_string())
-}
-
-/// Record the exact prompt + raw model output + final message, so "why did it say
+/// Record the diff + raw backend output + final message, so "why did it say
 /// that?" is always answerable. The latest generation is ALWAYS written (overwrite)
 /// to `<data-dir>/skill-studio/commitmsg-last.log`. Set `SKILL_STUDIO_COMMIT_DEBUG=1`
-/// to ALSO keep an appended history in `commitmsg-debug.log` (and to unsilence the
-/// llama-server logs).
-fn debug_log(root: &str, messages: &[ChatMessage], raw: &str, final_msg: &str) {
+/// to ALSO keep an appended history in `commitmsg-debug.log` (and, for the llama
+/// backend, to unsilence the engine logs).
+fn debug_log(root: &str, diff: &str, g: &commit_agent::Generated, final_msg: &str) {
     let Some(base) = dirs::data_dir() else { return };
     let dir = base.join("skill-studio");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
     let mut entry = String::from("\n========== generate_commit_message ==========\n");
-    entry.push_str(&format!("root: {root}\n"));
-    for m in messages {
-        entry.push_str(&format!("\n----- {} -----\n{}\n", m.role, m.content));
-    }
-    entry.push_str(&format!("\n----- raw model output -----\n{raw}\n"));
+    entry.push_str(&format!("root: {root}\nbackend: {}\n", g.backend));
+    entry.push_str(&format!("\n----- diff (truncated) -----\n{}\n", truncate_on_boundary(diff, MAX_PROMPT_DIFF_BYTES)));
+    entry.push_str(&format!("\n----- raw backend output -----\n{}\n", g.raw));
     entry.push_str(&format!("\n----- final message -----\n{final_msg}\n"));
 
     // Always available: the most recent generation, overwritten each call.
@@ -258,14 +214,6 @@ mod tests {
         assert_eq!(cached_for(root, h).as_deref(), Some("feat: add hello"));
         // A different diff (different hash) must NOT return the stale draft.
         assert_eq!(cached_for(root, diff_hash("other diff")), None);
-    }
-
-    #[test]
-    fn extract_commit_message_reads_structured_field() {
-        let raw = r#"{"analysis":"removed the body","commit_message":"docs: trim SKILL.md"}"#;
-        assert_eq!(extract_commit_message(raw), "docs: trim SKILL.md");
-        // Falls back to the raw text when it isn't the expected JSON object.
-        assert_eq!(extract_commit_message("docs: plain text"), "docs: plain text");
     }
 
     #[test]

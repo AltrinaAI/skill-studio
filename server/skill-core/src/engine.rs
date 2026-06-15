@@ -66,13 +66,13 @@ fn active_spec() -> &'static ModelSpec {
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
     /// The active model's id.
-    model: String,
+    pub(crate) model: String,
     /// The GGUF is present on disk (so generation won't trigger a download).
-    downloaded: bool,
+    pub(crate) downloaded: bool,
     /// On-disk size in MB (when present).
-    size_mb: Option<u64>,
+    pub(crate) size_mb: Option<u64>,
     /// Where the GGUF lives / will be cached.
-    path: String,
+    pub(crate) path: String,
 }
 
 pub fn model_status() -> ModelStatus {
@@ -149,6 +149,12 @@ fn ensure_model() -> Result<PathBuf, String> {
 /// Only downloads; the server is still spawned lazily on first `chat`, so this
 /// never loads the model into memory until it's actually used.
 pub fn prefetch_model() {
+    // The on-device model is opt-in only — the default path shells out to a
+    // logged-in coding-agent CLI (see `commit_agent`). Never fetch the ~1.4 GB
+    // GGUF unless the user explicitly selected the offline backend.
+    if !crate::commit_agent::offline_opted_in() {
+        return;
+    }
     if model_status().downloaded {
         return; // already cached (or a local override is in use)
     }
@@ -568,6 +574,11 @@ pub fn shutdown() {
 /// child of the backend that spawned it, so a second backend starting up must
 /// never shoot down the first one's engine mid-generation.
 pub fn reap_orphans() {
+    // Only the opt-in offline backend ever spawns an engine; skip the scan
+    // entirely on the default (CLI) path so we never touch a stray process.
+    if !crate::commit_agent::offline_opted_in() {
+        return;
+    }
     let needle = engine_binary().to_string_lossy().into_owned();
     if needle.is_empty() {
         return;

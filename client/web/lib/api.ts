@@ -447,21 +447,36 @@ export const gitCommit = (root: string, message: string) =>
   http<{ sha: string; summary: string }>("POST", "git-commit", { root, message });
 export const gitLog = (root: string, limit = 20) => http<GitCommit[]>("POST", "git-log", { root, limit });
 
-// --- on-device commit-message generation (local llama.cpp engine) ---
-/** Whether the on-device model is downloaded yet, so the UI can warn about the
- *  one-time first-run download before the user clicks Generate. */
+// --- commit-message generation (a logged-in coding-agent CLI by default;
+//     the on-device llama.cpp engine when opted in) ---
+/** Which backend will draft messages and whether it's ready, so the Save dialog
+ *  can show "using your Claude login", a log-in hint, or the one-time on-device
+ *  model download note. */
 export interface CommitModelStatus {
-  /** Active model id (e.g. "qwen3.5-2b"). */
+  /** Active backend: "claude" | "codex" | "gemini" | "llama" | "none". */
+  backend: "claude" | "codex" | "gemini" | "llama" | "none";
+  /** A draft can be produced right now (logged-in CLI, or downloaded model). */
+  ready: boolean;
+  /** A supported CLI is installed but not logged in — hint the user to log in. */
+  needsLogin: boolean;
+  /** One-line human hint for the dialog. */
+  detail: string;
+  /** Model id (CLI model, or the llama GGUF id). Empty for "none". */
   model: string;
-  /** The GGUF is present on disk (generation won't trigger a download). */
+  /** llama backend: the GGUF is present on disk. Mirrors `ready` for a cloud CLI. */
   downloaded: boolean;
-  /** On-disk size in MB, when present. */
+  /** llama backend: on-disk model size in MB, when present. */
   sizeMb?: number;
-  /** Where the GGUF lives / will be cached. */
+  /** llama backend: where the GGUF lives / will be cached. */
   path: string;
 }
-/** Draft a Conventional-Commits message from the skill's uncommitted diff,
- *  fully on-device. The first call may download the model + warm the engine. */
+/** True when the active backend runs on-device (no cloud call / no metered
+ *  credit / diff never leaves the machine) — so the eager background draft is
+ *  safe to fire automatically. Cloud backends require an explicit click. */
+export const isLocalCommitBackend = (s: CommitModelStatus | null) => s?.backend === "llama";
+/** Draft a one-line message from the skill's uncommitted diff. The default
+ *  backend shells out to a coding-agent CLI you're already logged into (keyless);
+ *  the on-device model is used only when opted in. */
 export const generateCommitMessage = (root: string) => http<string>("POST", "generate-commit-message", { root });
 /** Force a fresh draft (the manual ✨ Generate button): ignores the cache and
  *  varies the seed, so each click offers a different phrasing. */

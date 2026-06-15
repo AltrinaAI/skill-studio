@@ -21,7 +21,9 @@ use std::sync::Arc;
 use std::thread;
 
 use serde_json::{json, Value};
-use skill_core::{commitmsg, discover, engine, github, gitops, mining, secrets, skill, sync, update};
+use skill_core::{
+    commit_agent, commitmsg, discover, engine, github, gitops, mining, secrets, skill, sync, update,
+};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 mod proxy;
@@ -799,7 +801,7 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
         (Method::Post, "/api/generate-commit-message") => json_reply(commitmsg::generate(&s("root"))),
         (Method::Post, "/api/regenerate-commit-message") => json_reply(commitmsg::regenerate(&s("root"))),
         (Method::Post, "/api/peek-commit-message") => json_reply(commitmsg::peek(&s("root"))),
-        (Method::Get, "/api/commit-model-status") => json_reply(Ok(engine::model_status())),
+        (Method::Get, "/api/commit-model-status") => json_reply(Ok(commit_agent::status())),
         (Method::Post, "/api/git-log") => {
             let limit = v.get("limit").and_then(|x| x.as_u64()).unwrap_or(20) as usize;
             json_reply(gitops::git_log(&s("root"), limit))

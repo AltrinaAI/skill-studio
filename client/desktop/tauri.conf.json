@@ -41,7 +41,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": { "../../dist": "dist", "../../examples": "examples", "../../skills": "skills", "binaries": "binaries" },
+    "resources": { "../../dist": "dist", "../../examples": "examples", "../../skills": "skills" },
     "category": "DeveloperTool",
     "shortDescription": "View and edit Agent Skills",
     "longDescription": "Discover, view, and edit Agent Skills across Claude Code, Codex, Cursor, and OpenClaw.",

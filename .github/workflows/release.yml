@@ -10,16 +10,6 @@ jobs:
     # tauri-action creates the GitHub Release and uploads assets — needs write.
     permissions:
       contents: write
-    # Single source of truth for the llama.cpp build that BOTH the CPU engine and
-    # the CUDA bridge are pinned to (ggml backends are only ABI-compatible within
-    # one build) plus the CUDA arch set — referenced by the vendor steps and the
-    # bridge cache key so a tag/arch bump can never serve a stale, mismatched bridge.
-    env:
-      LLAMA_BUILD: b9486
-      # RTX 30/40/50 (Ampere/Ada/Blackwell). Datacenter (A100/H100) and pre-Ampere
-      # (RTX 20 / GTX 16) are omitted to keep the bridge ~128 MB — those fall back
-      # to CPU. Widen here if needed; the cache key includes this so it auto-rebuilds.
-      CUDA_ARCHS: "86;89;120"
     strategy:
       fail-fast: false
       matrix:
@@ -90,43 +80,10 @@ jobs:
           "AZURE_SIGNING_ENDPOINT=${{ secrets.AZURE_SIGNING_ENDPOINT }}" >> $env:GITHUB_ENV
           "AZURE_SIGNING_ALIAS=${{ secrets.AZURE_SIGNING_ALIAS }}" >> $env:GITHUB_ENV
 
-      # The on-device llama.cpp engine is declared as a Tauri bundle resource
-      # (client/desktop/binaries/<triple>/) but is gitignored, so it must be vendored
-      # per-runner before `tauri build` or the build aborts with
-      # "resource path `binaries` doesn't exist". Pinned for reproducible releases.
-      - name: Setup Python (engine vendor script)
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Vendor llama.cpp engine into client/desktop/binaries
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/fetch-engine.sh
-
-      # Optional CUDA GPU backend bridge (libggml-cuda.so / ggml-cuda.dll),
-      # ABI-matched to the engine above. We do NOT ship the CUDA runtime — the
-      # bridge links the user's own CUDA install (driver+runtime present → GPU,
-      # absent → CPU). Linux is built from source in a CUDA image (slow; no Linux
-      # CUDA prebuilt exists), so cache it per build-tag+arch-set. Windows pulls
-      # the official prebuilt DLL. macOS is skipped (Metal is compiled in).
-      - name: Cache CUDA backend bridge
-        id: cuda-bridge
-        if: startsWith(matrix.platform, 'ubuntu') || matrix.platform == 'windows-latest'
-        uses: actions/cache@v4
-        with:
-          path: |
-            client/desktop/binaries/*/libggml-cuda.so
-            client/desktop/binaries/*/ggml-cuda.dll
-          key: cuda-bridge-${{ matrix.platform }}-${{ env.LLAMA_BUILD }}-${{ env.CUDA_ARCHS }}
-
-      - name: Vendor CUDA backend bridge
-        if: (startsWith(matrix.platform, 'ubuntu') || matrix.platform == 'windows-latest') && steps.cuda-bridge.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/fetch-cuda-backend.sh
+      # NOTE: the on-device llama.cpp engine + CUDA bridge are no longer bundled.
+      # Commit-message drafting defaults to shelling out to a logged-in coding-agent
+      # CLI (see skill-core/commit_agent.rs); the engine is an opt-in offline
+      # backend the user provides (scripts/fetch-engine.sh + SKILL_STUDIO_LLAMA_SERVER).
 
       # Stamp the release version (the pushed tag, minus the leading `v`) into the
       # server workspace and desktop package so both binaries build at the tag version.

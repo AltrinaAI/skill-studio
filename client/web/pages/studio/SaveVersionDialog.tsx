@@ -44,10 +44,13 @@ export default function SaveVersionDialog({
   // Set once the user types, so a slow background draft never clobbers their text.
   const userEdited = useRef(false);
 
-  // On-device "draft a message from the diff".
+  // "Draft a message from the diff" (a logged-in coding-agent CLI, or the
+  // on-device model when opted in).
   const [generating, setGenerating] = useState(false);
   const [genErr, setGenErr] = useState<string | null>(null);
   const [modelStatus, setModelStatus] = useState<api.CommitModelStatus | null>(null);
+  // A draft has been applied (so the button reads "Regenerate", not "Generate").
+  const [drafted, setDrafted] = useState(false);
 
   // Draft (or re-draft) a message from the diff with the on-device model. The
   // backend reuses an eagerly-prepared draft when the diff is unchanged, so this
@@ -64,9 +67,10 @@ export default function SaveVersionDialog({
       const msg = auto ? await api.generateCommitMessage(root) : await api.regenerateCommitMessage(root);
       if (!auto || !userEdited.current) {
         setMessage(msg);
+        setDrafted(true);
         requestAnimationFrame(() => taRef.current?.select());
       }
-      setModelStatus((s) => (s ? { ...s, downloaded: true } : s));
+      setModelStatus((s) => (s ? { ...s, ready: true, downloaded: true } : s));
     } catch (e) {
       // Tauri rejects with a plain string (the Rust Err), not an Error — surface it.
       if (!auto) setGenErr(e instanceof Error ? e.message : typeof e === "string" ? e : "Couldn’t generate a message");
@@ -77,25 +81,35 @@ export default function SaveVersionDialog({
 
   useEffect(() => {
     taRef.current?.select();
-    // So we can warn about the one-time model download before generation runs.
-    api.commitModelStatus().then(setModelStatus).catch(() => setModelStatus(null));
-    // Auto-populate with the AI message. Prefer the eagerly-prepared draft (peek
-    // is instant and never runs the model); if none is ready for the current diff,
-    // draft one now so the box fills itself instead of showing the placeholder.
     let cancelled = false;
     (async () => {
+      // Resolve the backend first (which CLI / model, and whether to warn).
+      let status: api.CommitModelStatus | null = null;
+      try {
+        status = await api.commitModelStatus();
+      } catch {
+        status = null;
+      }
+      if (cancelled) return;
+      setModelStatus(status);
+      // Prefer an eagerly-prepared draft (instant; never runs a backend).
       try {
         const draft = await api.peekCommitMessage(root);
         if (cancelled) return;
         if (draft) {
           setMessage((cur) => (cur === defaultMessage && !userEdited.current ? draft : cur));
+          setDrafted(true);
           requestAnimationFrame(() => taRef.current?.select());
           return;
         }
       } catch {
-        /* no draft ready → fall through to generating one */
+        /* no draft ready → maybe draft one below */
       }
-      if (!cancelled) void generate(true);
+      if (cancelled) return;
+      // Auto-draft on open ONLY for a ready on-device backend (free; the diff
+      // never leaves the machine). A cloud CLI costs metered credit and sends the
+      // diff out, so it waits for an explicit Generate click.
+      if (api.isLocalCommitBackend(status) && status?.ready) void generate(true);
     })();
     return () => {
       cancelled = true;
@@ -144,10 +158,16 @@ export default function SaveVersionDialog({
           )}
           {error && <p className="text-xs text-danger">{error}</p>}
           {genErr && <p className="text-xs text-danger">{genErr}</p>}
-          {modelStatus && !modelStatus.downloaded && (
+          {modelStatus?.backend === "none" && (
+            <p className="rounded-md bg-panel px-2.5 py-2 text-xs text-warn">{modelStatus.detail}.</p>
+          )}
+          {modelStatus?.backend === "llama" && !modelStatus.downloaded && (
             <p className="text-[0.7rem] text-faint">
-              First use downloads the local AI model (~1–1.5 GB), one time. Generation runs fully on your machine.
+              First use downloads the on-device AI model (~1–1.5 GB), one time. Generation runs fully on your machine.
             </p>
+          )}
+          {modelStatus?.ready && modelStatus.backend !== "llama" && modelStatus.backend !== "none" && (
+            <p className="text-[0.7rem] text-faint">{modelStatus.detail} — your diff is sent there to draft the message.</p>
           )}
         </div>
 
@@ -155,11 +175,11 @@ export default function SaveVersionDialog({
           <button
             type="button"
             onClick={() => void generate()}
-            disabled={saving || generating}
-            title="The message is drafted automatically — click for a different take (on-device AI)"
+            disabled={saving || generating || modelStatus?.backend === "none"}
+            title="Draft a message from your changes using your logged-in AI CLI"
             className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-faint transition-colors hover:bg-panel hover:text-fg disabled:opacity-40"
           >
-            {generating ? "Generating…" : "✨ Regenerate"}
+            {generating ? "Generating…" : drafted ? "✨ Regenerate" : "✨ Generate"}
           </button>
           <div className="ml-auto flex gap-2">
             <button type="button" onClick={onClose} disabled={saving} className={btnGhost}>

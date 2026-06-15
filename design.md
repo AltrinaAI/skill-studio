@@ -63,9 +63,13 @@ Extra constraints:
   `/api/download` link. A native OS dialog can only see the *client* machine, so it breaks
   the remote model — there is no `invoke`-only escape hatch.
 
-## Reference example: on-device commit messages
+## Reference example: keyless commit messages
 
-- Logic: `server/skill-core/src/engine.rs` + `commitmsg.rs`.
+- Logic: `server/skill-core/src/commitmsg.rs` (policy: diff prep, cache, post-process)
+  → `commit_agent.rs` (backend selector). The default backend shells out to a
+  coding-agent CLI the user is already logged into (Claude Code → Codex → Gemini,
+  keyless — no API key); the on-device `engine.rs` (llama.cpp) is an opt-in offline
+  backend (`SKILL_STUDIO_COMMIT_AGENT=llama`), no longer bundled.
 - HTTP: `POST /api/generate-commit-message`, `GET /api/commit-model-status`.
 - Frontend: `api.generateCommitMessage()` / `api.commitModelStatus()` over `http`.
 - Verified end-to-end through the HTTP path (skill-server) — the only path.

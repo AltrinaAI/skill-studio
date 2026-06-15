@@ -34,9 +34,11 @@ npm run dev          # native desktop
 | Production | `npm run build`, then run `skill-server` | skill-server's port |
 
 Open a skill via the discovered list, the top-bar path input, **Browse…**, or a
-`?path=/abs/path/to/skill` deep link. The on-device LLM bundles a prebuilt
-`llama-server` (`scripts/fetch-engine.sh`); the model downloads on first use.
-`examples/` holds real document skills (`docx`, `pdf`, `pptx`, `xlsx`).
+`?path=/abs/path/to/skill` deep link. Commit-message drafting is keyless: it shells
+out to a coding-agent CLI you're already logged into (Claude Code, Codex, or
+Gemini). An on-device model (`scripts/fetch-engine.sh` + `SKILL_STUDIO_COMMIT_AGENT=llama`)
+is an opt-in offline alternative. `examples/` holds real document skills (`docx`,
+`pdf`, `pptx`, `xlsx`).
 
 ## Roadmap
 
