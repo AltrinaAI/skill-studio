@@ -1,10 +1,10 @@
 # Skill Studio
 
-The best editor for **[Agent Skills](.https://agentskills.io/home)**. 
+The best editor for **[Agent Skills](https://agentskills.io/home)**. 
 
 ![Skill Studio — recent skills, skill mining, and the discovered skills library](./Screenshot.png)
 
-As agents get more powerful, it's easy to feel like loosing control over the direction of your project or organization. Your need a place to specify your taste, expertise, and customize your way of doing things. We think the place to do it on the organization level is through [agent skills](.https://agentskills.io/home). 
+As agents get more powerful, it's easy to feel like losing control over the direction of your project or organization. You need a place to specify your taste, expertise, and customize your way of doing things. We think the place to do it on the organization level is through [agent skills](https://agentskills.io/home). 
 
 Any place that requires human creativity needs a good human interface, and there just isn't a good one with skills, so we built one and open-sourced it. 
 
@@ -40,7 +40,7 @@ Open a skill via the discovered list, the top-bar path input, **Browse…**, or 
 
 ## Roadmap
 
-The thesis: the future is one where humans **collaborate** with AI agents , not one where they are replaced by.  Skills are the medium for human expert knowledge, so they need a
+The thesis: the future is one where humans **collaborate** with AI agents, not one where they are replaced by them. Skills are the medium for human expert knowledge, so they need a
 first-class human UX. Next:
 
 1. **Team collaboration & secret management** — share skills and the secrets they need across a team, account-backed. 
