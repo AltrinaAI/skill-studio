@@ -30,11 +30,11 @@ Grab the latest build for your platform:
 | **Windows** | [Download](https://github.com/AltrinaAI/skill-studio/releases/latest/download/Skill-Studio-Windows-x64-setup.exe) |
 | **Linux** — Debian/Ubuntu | [Download](https://github.com/AltrinaAI/skill-studio/releases/latest/download/Skill-Studio-Linux-x86_64.deb) |
 
-### First launch (unsigned builds)
+### First launch
 
-The builds aren't OS-notarized yet, so macOS and Windows warn the first time you open the app — once, then never again:
+The builds aren't OS-notarized yet, so macOS and Windows warn the first time you open the app:
 
-- **macOS** — the app is blocked as unverified (or reported as "damaged"). Open **System Settings → Privacy & Security**, scroll to the message about Skill Studio, and click **Open Anyway**. 
+- **macOS** — the app is blocked as unverified. Open **System Settings → Privacy & Security**, scroll to the message about Skill Studio, and click **Open Anyway**. 
 - **Windows** — SmartScreen shows "Windows protected your PC". Click **More info → Run anyway**.
 - **Linux** — install the package with `sudo apt install ./Skill-Studio-Linux-x86_64.deb`.
 
