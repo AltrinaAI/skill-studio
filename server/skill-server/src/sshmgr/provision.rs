@@ -102,7 +102,7 @@ fn candidate_urls(version: &str, target: &str) -> Vec<String> {
     if let Some(base) = std::env::var("SKILL_STUDIO_SERVER_BASE_URL").ok().filter(|v| !v.is_empty()) {
         return vec![format!("{}/{asset}", base.trim_end_matches('/'))];
     }
-    let releases = "https://github.com/AltrinaAI/skills-studio/releases";
+    let releases = "https://github.com/AltrinaAI/skill-studio/releases";
     vec![
         format!("{releases}/download/v{version}/{asset}"),
         format!("{releases}/latest/download/{asset}"),

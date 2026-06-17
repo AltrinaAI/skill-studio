@@ -26,12 +26,12 @@ Latest build, one click per platform:
 
 | Platform | Download |
 |----------|----------|
-| **macOS** — Apple silicon | [`.dmg`](https://github.com/AltrinaAI/skills-studio/releases/latest/download/Skill-Studio-macOS-AppleSilicon.dmg) |
-| **macOS** — Intel | [`.dmg`](https://github.com/AltrinaAI/skills-studio/releases/latest/download/Skill-Studio-macOS-Intel.dmg) |
-| **Windows** | [`.exe` installer](https://github.com/AltrinaAI/skills-studio/releases/latest/download/Skill-Studio-Windows-x64-setup.exe) |
-| **Linux** — Debian/Ubuntu | [`.deb`](https://github.com/AltrinaAI/skills-studio/releases/latest/download/Skill-Studio-Linux-x86_64.deb) |
+| **macOS** — Apple silicon | [Download](https://github.com/AltrinaAI/skill-studio/releases/latest/download/Skill-Studio-macOS-AppleSilicon.dmg) |
+| **macOS** — Intel | [Download](https://github.com/AltrinaAI/skill-studio/releases/latest/download/Skill-Studio-macOS-Intel.dmg) |
+| **Windows** | [Download](https://github.com/AltrinaAI/skill-studio/releases/latest/download/Skill-Studio-Windows-x64-setup.exe) |
+| **Linux** — Debian/Ubuntu | [Download](https://github.com/AltrinaAI/skill-studio/releases/latest/download/Skill-Studio-Linux-x86_64.deb) |
 
-Older versions and checksums are on the [Releases](https://github.com/AltrinaAI/skills-studio/releases/latest) page. Prefer to build from source? See **Run it** below.
+Older versions and checksums are on the [Releases](https://github.com/AltrinaAI/skill-studio/releases/latest) page. Prefer to build from source? See **Run it** below.
 
 ## Run it
 

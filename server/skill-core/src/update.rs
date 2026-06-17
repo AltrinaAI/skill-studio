@@ -15,9 +15,9 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 
-const RELEASE_URL: &str = "https://github.com/AltrinaAI/skills-studio/releases/latest";
+const RELEASE_URL: &str = "https://github.com/AltrinaAI/skill-studio/releases/latest";
 const LATEST_JSON_URL: &str =
-    "https://github.com/AltrinaAI/skills-studio/releases/latest/download/latest.json";
+    "https://github.com/AltrinaAI/skill-studio/releases/latest/download/latest.json";
 /// First check shortly after startup, then a slow steady cadence.
 const FIRST_CHECK: Duration = Duration::from_secs(5);
 const CHECK_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
