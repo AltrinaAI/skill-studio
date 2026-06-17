@@ -1284,15 +1284,23 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(!agent_exited(&s.id), "a command under the bash -lc wrapper is not 'exited'");
-        // When it finishes the pane execs into the keep-alive `bash -l` and
-        // counts as at rest again. Generous deadline: the probe forks `ps`/`tmux`
-        // each poll, and on a loaded CI runner those can be starved well past a
-        // tight window — the property is eventually-true, so wait, don't race it.
+        // When it finishes the pane execs into the keep-alive `bash -l` and counts
+        // as at rest again — but that transition FLAPS: a freshly exec'd login shell
+        // briefly forks profile commands (and the probe can catch the pane mid-exec),
+        // so a single at-rest reading is a false positive. Require the at-rest state
+        // to hold across a few consecutive probes; the property is eventually-stable.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while std::time::Instant::now() < deadline && !agent_exited(&s.id) {
+        let mut consecutive = 0;
+        let mut settled = false;
+        while std::time::Instant::now() < deadline {
+            consecutive = if agent_exited(&s.id) { consecutive + 1 } else { 0 };
+            if consecutive >= 3 {
+                settled = true;
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
-        assert!(agent_exited(&s.id), "after the command ends only the keep-alive shell remains");
+        assert!(settled, "after the command ends only the keep-alive shell remains");
         let _ = kill_session(&s.id);
     }
 }
