@@ -442,7 +442,14 @@ export interface DirtyState {
 /** Batch "has uncommitted changes?" for the home page — one cheap status check per
  *  skill root, scoped to its own folder. Roots not under git report `dirty: false`. */
 export const gitDirtyMany = (roots: string[]) => http<DirtyState[]>("POST", "git-dirty-many", { roots });
-export const gitInit = (root: string) => http<GitInfo>("POST", "git-init", { root });
+/** Begin (or resume) tracking a skill: init its repo with a baseline commit,
+ *  clearing any prior opt-out. Personal skills are auto-tracked on discovery, so
+ *  this is mainly the re-track path for a skill that was opted out. */
+export const gitTrack = (root: string) => http<GitInfo>("POST", "git-track", { root });
+/** Opt a skill out of version tracking: delete its local .git and remember the
+ *  choice so discovery won't re-create it. Destructive — confirm before calling. */
+export const gitUntrack = (root: string) =>
+  http<{ ok: boolean }>("POST", "git-untrack", { root }).then(() => {});
 export const gitCommit = (root: string, message: string) =>
   http<{ sha: string; summary: string }>("POST", "git-commit", { root, message });
 export const gitLog = (root: string, limit = 20) => http<GitCommit[]>("POST", "git-log", { root, limit });

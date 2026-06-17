@@ -347,6 +347,23 @@ pub fn discover_all() -> Result<Vec<AgentSkills>, String> {
     ])
 }
 
+/// Like [`discover_all`], but also ensures every eligible personal skill is
+/// git-tracked (auto-init + baseline commit) — the side-effecting variant the
+/// `/api/discover` route uses. Project-scoped skills (`project: Some`) are left
+/// to their parent repo; proposals and non-personal kinds are skipped. The init
+/// work runs off the request thread, so discovery stays snappy.
+pub fn discover_and_autotrack() -> Result<Vec<AgentSkills>, String> {
+    let groups = discover_all()?;
+    let roots: Vec<String> = groups
+        .iter()
+        .flat_map(|g| g.skills.iter())
+        .filter(|s| s.kind == "personal" && !s.proposed && s.project.is_none())
+        .map(|s| s.root.clone())
+        .collect();
+    crate::gitops::auto_track_personal(roots);
+    Ok(groups)
+}
+
 /// Roots of the user's own installed skills (personal kind, not staged
 /// proposals) — the set a mining run may edit in place, snapshotted at run
 /// start for provenance.

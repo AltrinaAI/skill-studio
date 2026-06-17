@@ -252,6 +252,151 @@ pub fn git_init(root: &str) -> Result<GitInfo, String> {
     git_info(root)
 }
 
+// ---- auto-tracking & opt-out -------------------------------------------------
+//
+// Personal skills are version-tracked by default: discovery inits a repo and
+// lands a baseline commit for each standalone one. Opting out deletes the skill's
+// `.git` and records the choice in a small denylist (canonicalized roots) so the
+// next discovery doesn't simply re-create it.
+
+fn untracked_store() -> Result<PathBuf, String> {
+    Ok(crate::secrets::config_dir()?.join("untracked.json"))
+}
+
+/// Canonicalized skill root — the stable denylist key, so a path and its
+/// symlinked/relative spellings compare equal. Falls back to the raw string when
+/// the path can't be resolved.
+fn canonical(root: &str) -> String {
+    std::fs::canonicalize(root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| root.to_string())
+}
+
+fn load_untracked() -> std::collections::BTreeSet<String> {
+    untracked_store()
+        .ok()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_untracked(set: &std::collections::BTreeSet<String>) {
+    let Ok(path) = untracked_store() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(set) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+fn add_untracked(root: &str) {
+    let mut set = load_untracked();
+    if set.insert(canonical(root)) {
+        save_untracked(&set);
+    }
+}
+
+fn remove_untracked(root: &str) {
+    let mut set = load_untracked();
+    if set.remove(&canonical(root)) {
+        save_untracked(&set);
+    }
+}
+
+/// `git init` + seed the local exclude + a baseline "Initial version" commit when
+/// a git identity is set. The baseline keeps a fresh repo CLEAN (no false
+/// "everything changed" state) and syncable right away. Without an identity we
+/// stop at the empty repo — the Save-version flow surfaces the identity prompt on
+/// the first manual save.
+fn init_and_baseline(root: &str) -> Result<(), String> {
+    let root_path = PathBuf::from(root);
+    let out = git(&root_path, &["init"])?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    // Seed the ignore BEFORE the catch-all add so secrets/junk are never staged.
+    ensure_exclude(&root_path);
+    let has_identity = git_ok(&root_path, &["config", "user.email"]).map(|s| !s.is_empty()).unwrap_or(false)
+        && git_ok(&root_path, &["config", "user.name"]).map(|s| !s.is_empty()).unwrap_or(false);
+    if has_identity {
+        let _ = git(&root_path, &["add", "-A"]);
+        // "nothing to commit" (e.g. an empty skill dir) is fine — the repo stands.
+        let _ = git(&root_path, &["commit", "-m", "Initial version"]);
+    }
+    Ok(())
+}
+
+/// Begin (or resume) tracking a skill: clear any prior opt-out, then init with a
+/// baseline commit. Backs the "Start tracking" button — also the re-track path
+/// for a skill the user previously opted out of.
+pub fn git_track(root: &str) -> Result<GitInfo, String> {
+    if !git_available() {
+        return Err("Git isn't installed.".into());
+    }
+    remove_untracked(root);
+    init_and_baseline(root)?;
+    git_info(root)
+}
+
+/// Opt a skill out of tracking: record the choice (so auto-tracking won't undo
+/// it) and delete the skill's OWN `.git`. Refuses when a parent repository owns
+/// the history. Destructive — callers confirm first.
+pub fn git_untrack(root: &str) -> Result<(), String> {
+    if !git_available() {
+        return Err("Git isn't installed.".into());
+    }
+    let info = git_info(root)?;
+    if info.in_parent_repo {
+        return Err("This skill is versioned by a parent repository — manage its history there.".into());
+    }
+    if !info.is_repo {
+        add_untracked(root); // not a repo (already gone / never tracked): just record the opt-out
+        return Ok(());
+    }
+    // Only ever remove the skill's own repo: confirm the repo top-level IS this
+    // folder before deleting, so a parent repo's `.git` can never be wiped.
+    let root_path = std::fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let top = info
+        .toplevel
+        .as_deref()
+        .map(|t| std::fs::canonicalize(t).unwrap_or_else(|_| PathBuf::from(t)));
+    if top.as_deref() != Some(root_path.as_path()) {
+        return Err("Refusing to remove version history — this isn't the skill's own repository.".into());
+    }
+    // Record the opt-out before deleting so a half-failed delete still won't bounce
+    // back to tracked on the next discovery (auto-track checks the denylist first).
+    add_untracked(root);
+    std::fs::remove_dir_all(root_path.join(".git")).map_err(|e| format!("Couldn't remove version history: {e}"))?;
+    Ok(())
+}
+
+/// Ensure each personal-skill root is tracked. Cheaply skips roots that are
+/// already repos (a `.git` stat) or opted out, and does the real work for the
+/// rest off the request thread (the first run may init many repos). A root that
+/// turns out to sit inside a parent repo is left alone — never a nested repo.
+pub fn auto_track_personal(roots: Vec<String>) {
+    if !git_available() {
+        return;
+    }
+    let denied = load_untracked();
+    let todo: Vec<String> = roots
+        .into_iter()
+        .filter(|r| !denied.contains(&canonical(r)) && !Path::new(r).join(".git").exists())
+        .collect();
+    if todo.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for root in todo {
+            match git_info(&root) {
+                Ok(info) if !info.is_repo && !info.in_parent_repo => {
+                    let _ = init_and_baseline(&root);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 pub fn git_commit(root: &str, message: &str) -> Result<CommitResult, String> {
     if !git_available() {
         return Err("Git isn't installed.".into());
@@ -1214,6 +1359,66 @@ mod tests {
         assert!(!porcelain.contains("UU"), "no unmerged index entry: {porcelain}");
         assert!(find_preview_stash(&base).is_some(), "set-aside work kept (recoverable), not lost");
         assert_eq!(current_branch(&base).as_deref(), Some(branch.as_str()), "reattached to the branch");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn baseline_commit_lands_and_excludes_secrets() {
+        if !git_available() {
+            return;
+        }
+        // The auto-track baseline path: init_and_baseline lands an "Initial version"
+        // capturing the skill but NOT a stray .env. Pre-seed the repo + a LOCAL
+        // identity so the commit is deterministic regardless of the machine's global
+        // git config; init_and_baseline touches no config dir, so no XDG isolation.
+        let base = std::env::temp_dir().join(format!("ass_baseline_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("SKILL.md"), "---\nname: t\n---\nhi").unwrap();
+        std::fs::write(base.join(".env"), "SECRET=1\n").unwrap();
+        let root = base.to_string_lossy().to_string();
+
+        git_init(&root).unwrap();
+        let _ = git(&base, &["config", "user.email", "test@example.com"]);
+        let _ = git(&base, &["config", "user.name", "Test"]);
+
+        init_and_baseline(&root).unwrap();
+        let log = git_log(&root, 10).unwrap();
+        assert_eq!(log.len(), 1, "exactly one baseline commit");
+        assert_eq!(log[0].message, "Initial version");
+        let tracked = git_ok(&base, &["ls-files"]).unwrap();
+        assert!(tracked.contains("SKILL.md"));
+        assert!(!tracked.contains(".env"), "baseline must not capture secrets: {tracked}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn untrack_refuses_a_parent_repo_skill() {
+        if !git_available() {
+            return;
+        }
+        // A skill nested in a parent repo: untrack must refuse and never delete the
+        // parent's .git. This guard returns before any denylist write, so the test
+        // needs no config-dir isolation.
+        let base = std::env::temp_dir().join(format!("ass_untrack_parent_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let skill = base.join(".claude/skills/nested");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: nested\n---\nhi").unwrap();
+        let parent = base.to_string_lossy().to_string();
+        let skill_root = skill.to_string_lossy().to_string();
+
+        git_init(&parent).unwrap();
+        let _ = git(&base, &["config", "user.email", "test@example.com"]);
+        let _ = git(&base, &["config", "user.name", "Test"]);
+        let _ = git(&base, &["add", "-A"]);
+        let _ = git(&base, &["commit", "-m", "init"]);
+
+        assert!(git_info(&skill_root).unwrap().in_parent_repo);
+        assert!(git_untrack(&skill_root).is_err(), "won't delete a parent repo's history");
+        assert!(base.join(".git").exists(), "parent .git left intact");
 
         let _ = std::fs::remove_dir_all(&base);
     }

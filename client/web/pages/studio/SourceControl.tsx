@@ -197,10 +197,36 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
     setBusy(true);
     setActionErr(null);
     try {
-      await api.gitInit(root);
+      await api.gitTrack(root);
       await refresh();
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "Failed to start tracking");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Opt out of tracking: delete this skill's local history. Destructive and
+  // irreversible, so it's gated behind a danger confirm. The choice is recorded
+  // server-side so auto-tracking won't re-create the repo on the next discovery.
+  const stopTracking = async () => {
+    if (busy) return;
+    if (
+      !(await confirm({
+        title: "Stop tracking this skill?",
+        body: "This deletes all saved versions and the local version history for this skill. Your current files stay, but past versions can’t be recovered.",
+        confirmLabel: "Stop tracking",
+        danger: true,
+      }))
+    )
+      return;
+    setBusy(true);
+    setActionErr(null);
+    try {
+      await api.gitUntrack(root);
+      await refresh();
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : "Couldn’t stop tracking");
     } finally {
       setBusy(false);
     }
@@ -479,7 +505,24 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
             open={open.versions}
             fill
             minBody={64}
-            header={<PanelHeader title="Versions" count={log.length} open={open.versions} onToggle={() => toggle("versions")} />}
+            header={
+              <PanelHeader title="Versions" count={log.length} open={open.versions} onToggle={() => toggle("versions")}>
+                {/* Opt out of tracking — destructive (deletes this skill's local
+                    history), so it confirms first; mirrors the discard-all action. */}
+                <button
+                  type="button"
+                  onClick={stopTracking}
+                  disabled={busy}
+                  title="Stop tracking this skill — deletes its version history"
+                  className="ml-auto text-faint hover:text-danger disabled:opacity-40"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M4.9 4.9 19.1 19.1" />
+                  </svg>
+                </button>
+              </PanelHeader>
+            }
           >
             {log.length === 0 ? (
               <p className="px-3 pb-3 text-xs text-faint">No versions yet.</p>

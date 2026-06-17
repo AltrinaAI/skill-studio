@@ -586,7 +586,7 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
             content_type: "text/plain".into(),
             extra: vec![],
         },
-        (Method::Get, "/api/discover") => json_reply(discover::discover_all()),
+        (Method::Get, "/api/discover") => json_reply(discover::discover_and_autotrack()),
         (Method::Post, "/api/read-skill") => {
             let root = skill::resolve_skill_input(&s("path"), ctx.examples_base.as_deref());
             json_reply(skill::build_raw_skill(&root))
@@ -788,7 +788,10 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
             json_reply(secrets::secret_keys().map(|keys| skill::scan_for_env_vars(Path::new(&root), &keys)))
         }
         (Method::Post, "/api/git-info") => json_reply(gitops::git_info(&s("root"))),
-        (Method::Post, "/api/git-init") => json_reply(gitops::git_init(&s("root"))),
+        (Method::Post, "/api/git-track") => json_reply(gitops::git_track(&s("root"))),
+        (Method::Post, "/api/git-untrack") => {
+            json_reply(gitops::git_untrack(&s("root")).map(|_| json!({ "ok": true })))
+        }
         (Method::Post, "/api/git-dirty-many") => {
             let roots: Vec<String> = v
                 .get("roots")
