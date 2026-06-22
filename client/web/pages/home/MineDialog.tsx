@@ -60,6 +60,9 @@ export default function MineDialog({
   const [promptEdited, setPromptEdited] = useState(false);
   const [reinstalling, setReinstalling] = useState(false);
   const [reinstalled, setReinstalled] = useState(false);
+  // Whether the installed skill-miner differs from the bundled official copy —
+  // gates the "reinstall" offer (no point showing it when they already match).
+  const [drifted, setDrifted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const confirm = useConfirm();
@@ -98,6 +101,11 @@ export default function MineDialog({
         setAgent((cur) => cur || usable[0]?.id || "");
       })
       .catch(() => setAgents([]));
+  }, []);
+
+  // Does the installed skill-miner differ from the bundled official copy?
+  useEffect(() => {
+    api.minerStatus().then((s) => setDrifted(s.drifted)).catch(() => setDrifted(false));
   }, []);
 
   // The prompt the run will send, fetched from the server (the one place that
@@ -295,16 +303,19 @@ export default function MineDialog({
             skill.{" "}
             {reinstalled ? (
               <span className="text-ok">Official version reinstalled ✓</span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void reinstallMiner()}
-                disabled={reinstalling}
-                className="underline decoration-dotted underline-offset-2 hover:text-fg disabled:opacity-50"
-              >
-                {reinstalling ? "Reinstalling…" : "Reinstall official version"}
-              </button>
-            )}
+            ) : drifted ? (
+              <>
+                <span className="text-warn">Your copy differs from the official version.</span>{" "}
+                <button
+                  type="button"
+                  onClick={() => void reinstallMiner()}
+                  disabled={reinstalling}
+                  className="underline decoration-dotted underline-offset-2 hover:text-fg disabled:opacity-50"
+                >
+                  {reinstalling ? "Reinstalling…" : "Reinstall official version"}
+                </button>
+              </>
+            ) : null}
           </p>
         </div>
 

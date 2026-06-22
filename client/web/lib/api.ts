@@ -808,6 +808,14 @@ export const mineStart = (a: MineStartArgs) => http<MineState>("POST", "mine/sta
  *  version (versioned copies keep their .git — the refresh shows as
  *  uncommitted changes). Returns the restored roots. */
 export const mineReinstallMiner = () => http<{ roots: string[] }>("POST", "mine/reinstall-miner");
+/** Whether an installed skill-miner copy differs from the bundled official version.
+ *  `drifted` is neutral — the copy is editable, so it may be a local customization
+ *  OR a shipped update not yet pulled. The dialog only offers reinstall when drifted. */
+export interface MinerStatus {
+  installed: boolean;
+  drifted: boolean;
+}
+export const minerStatus = () => http<MinerStatus>("GET", "mine/miner-status");
 export const mineState = () => http<MineState>("GET", "mine/state");
 /** The current run dir's files — the mining page's artifacts listing. */
 export const mineFiles = () => http<MineFiles>("GET", "mine/files");

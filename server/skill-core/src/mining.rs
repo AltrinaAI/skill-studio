@@ -25,8 +25,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use walkdir::WalkDir;
+
 use crate::agents::{self, LaunchCtx};
-use crate::sync::install_skill;
+use crate::sync::{install_skill, IGNORED_DIRS};
 use crate::secrets;
 
 /// Where the miner's transcript adapters look, mirrored here only to give the
@@ -245,6 +247,77 @@ pub fn reinstall_miner(bundled: Option<&Path>) -> Result<Vec<String>, String> {
         restored.push(target.to_string_lossy().into_owned());
     }
     Ok(restored)
+}
+
+/// Readiness of the installed skill-miner relative to the bundled official copy,
+/// for the mine dialog. `drifted` is a NEUTRAL signal — the installed copy is
+/// deliberately editable, so it can differ because the user customized it OR
+/// because a newer Skill Studio shipped an updated skill (e.g. a new transcript
+/// adapter) the user hasn't pulled — either way "Reinstall" is the way to the
+/// official version.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MinerStatus {
+    /// At least one canonical copy of the skill is installed.
+    pub installed: bool,
+    /// An installed copy's content differs from the bundled version.
+    pub drifted: bool,
+}
+
+/// Content signature of a skill tree: relative-path → content hash, over every
+/// file except the build/VCS junk `install_skill` skips (`.git`, `__pycache__`
+/// a run leaves behind, …). Not cryptographic — only ever compared against
+/// another signature computed the same way in the same process, to spot drift.
+fn tree_sig(root: &Path) -> std::collections::BTreeMap<String, u64> {
+    use std::hash::{Hash, Hasher};
+    let mut sig = std::collections::BTreeMap::new();
+    let ignored = |p: &Path| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| IGNORED_DIRS.contains(&n))
+            .unwrap_or(false)
+    };
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !ignored(e.path()))
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Ok(rel) = entry.path().strip_prefix(root) else { continue };
+        let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut h);
+        sig.insert(rel.to_string_lossy().replace('\\', "/"), h.finish());
+    }
+    sig
+}
+
+/// Compare each installed skill-miner copy against the bundled official version.
+/// Best-effort: if the bundled source can't be located we report `drifted: false`
+/// rather than nag with no way to fix it.
+pub fn miner_status(bundled: Option<&Path>) -> MinerStatus {
+    match dirs::home_dir() {
+        Some(home) => miner_status_in(&home, bundled),
+        None => MinerStatus { installed: false, drifted: false },
+    }
+}
+
+fn miner_status_in(home: &Path, bundled: Option<&Path>) -> MinerStatus {
+    let copies: Vec<PathBuf> = secrets::INSTALL_DESTS
+        .iter()
+        .map(|d| home.join(d.skills_rel).join(MINER_SKILL))
+        .filter(|t| t.join("SKILL.md").exists())
+        .collect();
+    let installed = !copies.is_empty();
+    let Some(bundled) = bundled.filter(|s| s.join("SKILL.md").exists()) else {
+        return MinerStatus { installed, drifted: false };
+    };
+    let want = tree_sig(bundled);
+    let drifted = copies.iter().any(|c| tree_sig(c) != want);
+    MinerStatus { installed, drifted }
 }
 
 /// Everything the route layer needs to spawn the run's terminal.
@@ -624,6 +697,42 @@ mod tests {
         let p = ensure_installed_in(&bare, Some(&src)).unwrap();
         assert_eq!(p, bare.join(".agents/skills/skill-miner"));
         assert!(p.join("SKILL.md").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn miner_status_flags_only_real_content_drift() {
+        let base = std::env::temp_dir().join(format!("ass_mine_status_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        std::fs::create_dir_all(home.join(".codex")).unwrap(); // cohort → shared dir
+        // Bundled official source: SKILL.md + a nested script (the drift lives in scripts/).
+        let src = base.join("bundled/skill-miner");
+        std::fs::create_dir_all(src.join("scripts")).unwrap();
+        std::fs::write(src.join("SKILL.md"), "official").unwrap();
+        std::fs::write(src.join("scripts/common.py"), "v1").unwrap();
+
+        // Nothing installed yet.
+        let s = miner_status_in(&home, Some(&src));
+        assert!(!s.installed && !s.drifted);
+
+        // Install a copy → identical content → no drift.
+        ensure_installed_in(&home, Some(&src)).unwrap();
+        let installed = home.join(".agents/skills/skill-miner");
+        let s = miner_status_in(&home, Some(&src));
+        assert!(s.installed && !s.drifted, "fresh install must not look drifted");
+
+        // A __pycache__ a run leaves behind is ignored (not drift).
+        std::fs::create_dir_all(installed.join("scripts/__pycache__")).unwrap();
+        std::fs::write(installed.join("scripts/__pycache__/common.cpython-312.pyc"), "junk").unwrap();
+        assert!(!miner_status_in(&home, Some(&src)).drifted, "build junk must not count");
+
+        // Editing a script (e.g. an outdated copy missing the opencode adapter) IS drift.
+        std::fs::write(installed.join("scripts/common.py"), "v2-stale").unwrap();
+        assert!(miner_status_in(&home, Some(&src)).drifted, "script content change is drift");
+
+        // No bundled source to compare against → never nag.
+        assert!(!miner_status_in(&home, None).drifted);
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -705,6 +705,12 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
         // The current run dir's files (the single retained run) — the mining
         // page's artifacts listing.
         (Method::Get, "/api/mine/files") => json_reply(mining::files()),
+        // Whether the installed skill-miner copies differ from the bundled
+        // official version — the dialog only offers "reinstall" when they do.
+        (Method::Get, "/api/mine/miner-status") => {
+            let bundled = bundled_skill(ctx, "skill-miner");
+            json_reply(Ok(mining::miner_status(bundled.as_deref())))
+        }
         // Restore every installed copy of the skill-miner to the official
         // bundled version (any .git the user created is preserved, so the
         // refresh lands as ordinary reviewable uncommitted changes).
