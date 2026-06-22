@@ -3,21 +3,28 @@
 //! The default path shells out to a coding-agent CLI the user already installed
 //! and logged into (Claude Code, Codex, Gemini) — keyless, because their
 //! subscription OAuth login does the auth, so we ship nothing and ask for no API
-//! key. Same shell-out philosophy as `gitops`→`git` and `engine`→`llama-server`.
-//! The on-device `engine` (llama.cpp) is still here but DEMOTED to an opt-in
-//! offline backend (`SKILL_STUDIO_COMMIT_AGENT=llama`); it is no longer bundled.
+//! key. opencode rides along too, but it's BYO-API-key (no subscription concept),
+//! so it's the exception to the scrub rule below. Same shell-out philosophy as
+//! `gitops`→`git` and `engine`→`llama-server`. The on-device `engine` (llama.cpp)
+//! is still here but DEMOTED to an opt-in offline backend
+//! (`SKILL_STUDIO_COMMIT_AGENT=llama`); it is no longer bundled.
 //!
 //! Precedence (first that's installed AND logged in): explicit
-//! `SKILL_STUDIO_COMMIT_AGENT` → claude → codex → gemini → manual. `llama` is
-//! never auto-selected — it must be opted in.
+//! `SKILL_STUDIO_COMMIT_AGENT` → claude → codex → gemini → opencode → manual.
+//! opencode sits last because it's the only one that may bill a metered API key
+//! rather than a flat subscription. `llama` is never auto-selected — it must be
+//! opted in.
 //!
 //! Two load-bearing rules, both enforced below:
-//!   - We REMOVE the provider's API-key env vars from the child, because these
-//!     CLIs prefer an API key over the subscription when one is present (the
-//!     desktop injects secrets into spawned envs), which would silently bill the
-//!     API org instead of using the keyless subscription.
-//!   - We run from a NEUTRAL cwd and forbid the agent tool-loop so the call is a
-//!     single inference turn that summarizes the diff instead of poking the repo.
+//!   - For the SUBSCRIPTION CLIs we REMOVE the provider's API-key env vars from
+//!     the child, because they prefer an API key over the subscription when one
+//!     is present (the desktop injects secrets into spawned envs), which would
+//!     silently bill the API org instead of using the keyless subscription.
+//!     opencode is exempt: it has no subscription, so scrubbing would leave it
+//!     with no auth at all — it keeps whatever provider key it has configured.
+//!   - We run from a NEUTRAL cwd and (where the CLI supports it) forbid the agent
+//!     tool-loop so the call is a single inference turn that summarizes the diff
+//!     instead of poking the repo.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -55,6 +62,8 @@ pub enum Backend {
     Claude,
     Codex,
     Gemini,
+    /// BYO-API-key coding agent (provider keys, not a subscription).
+    Opencode,
     /// Opt-in on-device llama.cpp (`engine`).
     Llama,
     /// Nothing usable — the UI falls back to letting the user type.
@@ -67,6 +76,7 @@ impl Backend {
             Backend::Claude => "claude",
             Backend::Codex => "codex",
             Backend::Gemini => "gemini",
+            Backend::Opencode => "opencode",
             Backend::Llama => "llama",
             Backend::None => "none",
         }
@@ -103,6 +113,7 @@ pub fn generate(diff: &str, seed: i64, temperature: f32) -> Result<Generated, St
         Backend::Claude => run_claude(&require_bin(Backend::Claude, CLAUDE_BINS)?, diff),
         Backend::Codex => run_codex(&require_bin(Backend::Codex, CODEX_BINS)?, diff),
         Backend::Gemini => run_gemini(&require_bin(Backend::Gemini, GEMINI_BINS)?, diff),
+        Backend::Opencode => run_opencode(&require_bin(Backend::Opencode, OPENCODE_BINS)?, diff),
         Backend::Llama => run_llama(diff, seed, temperature),
         Backend::None => Err(no_backend_message()),
     }
@@ -115,7 +126,7 @@ pub fn generate(diff: &str, seed: i64, temperature: f32) -> Result<Generated, St
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitStatus {
-    /// Active backend id: `claude` | `codex` | `gemini` | `llama` | `none`.
+    /// Active backend id: `claude` | `codex` | `gemini` | `opencode` | `llama` | `none`.
     backend: String,
     /// A draft can be produced right now (logged-in CLI, or downloaded model).
     ready: bool,
@@ -149,6 +160,7 @@ pub fn status() -> CommitStatus {
         Backend::Claude => cloud(Backend::Claude, "claude-haiku-4-5", "Drafting with your Claude login"),
         Backend::Codex => cloud(Backend::Codex, "", "Drafting with your ChatGPT (Codex) login"),
         Backend::Gemini => cloud(Backend::Gemini, "gemini-2.5-flash", "Drafting with your Google (Gemini) login"),
+        Backend::Opencode => cloud(Backend::Opencode, "", "Drafting with your opencode CLI"),
         Backend::Llama => {
             let m = engine::model_status();
             CommitStatus {
@@ -178,9 +190,9 @@ pub fn status() -> CommitStatus {
                 detail: if off {
                     "AI drafting is turned off — type your message".into()
                 } else if installed {
-                    "Log in to your coding-agent CLI (claude, codex, or gemini) to draft messages".into()
+                    "Log in to your coding-agent CLI (claude, codex, gemini, or opencode) to draft messages".into()
                 } else {
-                    "No AI generator found — type a message, or install and log in to claude, codex, or gemini".into()
+                    "No AI generator found — type a message, or install and log in to claude, codex, gemini, or opencode".into()
                 },
                 model: String::new(),
                 downloaded: false,
@@ -193,11 +205,11 @@ pub fn status() -> CommitStatus {
 
 fn no_backend_message() -> String {
     if any_installed() {
-        "No logged-in coding-agent CLI. Run `claude` (or `codex` / `gemini`) once to log in — \
+        "No logged-in coding-agent CLI. Run `claude` (or `codex` / `gemini` / `opencode`) once to log in — \
          or set SKILL_STUDIO_COMMIT_AGENT=llama to use the on-device model."
             .into()
     } else {
-        "No commit-message generator available. Install and log in to claude, codex, or gemini — \
+        "No commit-message generator available. Install and log in to claude, codex, gemini, or opencode — \
          or set SKILL_STUDIO_COMMIT_AGENT=llama to use the on-device model."
             .into()
     }
@@ -208,6 +220,7 @@ fn no_backend_message() -> String {
 const CLAUDE_BINS: &[&str] = &["claude"];
 const CODEX_BINS: &[&str] = &["codex"];
 const GEMINI_BINS: &[&str] = &["gemini"];
+const OPENCODE_BINS: &[&str] = &["opencode"];
 
 /// Raw lowercased `SKILL_STUDIO_COMMIT_AGENT`, if set and non-empty.
 fn env_choice() -> Option<String> {
@@ -245,6 +258,7 @@ fn detect_backend() -> Backend {
             "claude" => return Backend::Claude,
             "codex" => return Backend::Codex,
             "gemini" => return Backend::Gemini,
+            "opencode" => return Backend::Opencode,
             _ => {} // unknown value → fall through to auto-detect
         }
     }
@@ -262,12 +276,19 @@ fn detect_backend() -> Backend {
     if resolve(GEMINI_BINS).is_some() && gemini_logged_in() {
         return Backend::Gemini;
     }
+    // opencode last: it may bill a metered provider key rather than a flat subscription.
+    if resolve(OPENCODE_BINS).is_some() && opencode_logged_in() {
+        return Backend::Opencode;
+    }
     Backend::None
 }
 
 /// True if any supported cloud CLI binary is present (regardless of login).
 fn any_installed() -> bool {
-    resolve(CLAUDE_BINS).is_some() || resolve(CODEX_BINS).is_some() || resolve(GEMINI_BINS).is_some()
+    resolve(CLAUDE_BINS).is_some()
+        || resolve(CODEX_BINS).is_some()
+        || resolve(GEMINI_BINS).is_some()
+        || resolve(OPENCODE_BINS).is_some()
 }
 
 fn require_bin(backend: Backend, names: &[&str]) -> Result<PathBuf, String> {
@@ -383,6 +404,19 @@ fn gemini_logged_in() -> bool {
     dirs::home_dir().map(|h| h.join(".gemini").join("oauth_creds.json").is_file()).unwrap_or(false)
 }
 
+/// opencode keeps provider credentials in ~/.local/share/opencode/auth.json (a
+/// JSON object keyed by provider). A non-empty object = at least one provider is
+/// configured — the same disk-probe approach as gemini, and cheaper than spawning
+/// `opencode auth list`.
+fn opencode_logged_in() -> bool {
+    let Some(home) = dirs::home_dir() else { return false };
+    match std::fs::read_to_string(home.join(".local/share/opencode/auth.json")) {
+        // contains a quote ⇒ has at least one key; rules out "", "{}", whitespace.
+        Ok(s) => s.contains('"'),
+        Err(_) => false,
+    }
+}
+
 fn probe_cmd(bin: &PathBuf, args: &[&str]) -> Command {
     let mut cmd = hidden_command(bin);
     cmd.args(args);
@@ -469,6 +503,24 @@ fn run_gemini(bin: &PathBuf, diff: &str) -> Result<Generated, String> {
         return Err("Gemini returned an empty response.".into());
     }
     Ok(Generated { text, backend: "gemini", raw: out })
+}
+
+/// opencode is BYO-API-key, so — unlike the subscription CLIs — we do NOT scrub
+/// provider keys (scrubbing would leave it unauthenticated). `run --format
+/// default` prints just the assistant's text to stdout (the session banner goes
+/// to stderr, which `run_proc` discards). `run` reads no stdin, so the diff rides
+/// inline in the message, after a `--` guard so a diff line beginning with `-`
+/// can't be parsed as a flag. The model is opencode's own configured default.
+fn run_opencode(bin: &PathBuf, diff: &str) -> Result<Generated, String> {
+    let mut cmd = hidden_command(bin);
+    neutral_cwd(&mut cmd);
+    cmd.args(["run", "--format", "default", "--", &format!("{INSTRUCTION}\n\nGit diff:\n{diff}")]);
+    let (ok, out) = run_proc(cmd, None, GEN_TIMEOUT)?;
+    let text = out.trim().to_string();
+    if !ok || text.is_empty() {
+        return Err("opencode couldn't generate a message — check `opencode auth list`.".into());
+    }
+    Ok(Generated { text: text.clone(), backend: "opencode", raw: out })
 }
 
 /// The opt-in on-device path: the existing `engine` (llama.cpp) with the
@@ -587,16 +639,31 @@ fn run_proc(mut cmd: Command, stdin_data: Option<&str>, timeout: Duration) -> Re
 mod tests {
     use super::*;
 
+    /// One test owns the process-global SKILL_STUDIO_COMMIT_AGENT (a second test
+    /// touching it would race under cargo's parallel runner). Covers both the
+    /// offline opt-in and the named-backend override; the override branch of
+    /// `detect_backend` returns directly with no filesystem probe, so the backend
+    /// assertions are deterministic.
     #[test]
-    fn offline_opt_in_reads_env() {
+    fn env_override_drives_offline_and_backend() {
         // No env override → not offline (default is the cloud CLI chain).
         std::env::remove_var("SKILL_STUDIO_COMMIT_AGENT");
         assert!(!offline_opted_in());
-        std::env::set_var("SKILL_STUDIO_COMMIT_AGENT", "llama");
-        assert!(offline_opted_in());
-        std::env::set_var("SKILL_STUDIO_COMMIT_AGENT", "claude");
-        assert!(!offline_opted_in());
+
+        for (val, want, offline) in [
+            ("llama", Backend::Llama, true),
+            ("claude", Backend::Claude, false),
+            ("codex", Backend::Codex, false),
+            ("gemini", Backend::Gemini, false),
+            ("opencode", Backend::Opencode, false),
+            ("off", Backend::None, false),
+        ] {
+            std::env::set_var("SKILL_STUDIO_COMMIT_AGENT", val);
+            assert_eq!(detect_backend(), want, "backend for env={val}");
+            assert_eq!(offline_opted_in(), offline, "offline for env={val}");
+        }
         std::env::remove_var("SKILL_STUDIO_COMMIT_AGENT");
+        assert_eq!(Backend::Opencode.id(), "opencode");
     }
 
     #[test]

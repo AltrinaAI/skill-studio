@@ -957,7 +957,8 @@ export function Component() {
               No installed skills found. Skills live under <code className="font-mono text-[0.8em]">~/.agents/skills</code>,{" "}
               <code className="font-mono text-[0.8em]">~/.claude/skills</code>,{" "}
               <code className="font-mono text-[0.8em]">~/.codex/skills</code>,{" "}
-              <code className="font-mono text-[0.8em]">~/.cursor/skills-cursor</code>, and{" "}
+              <code className="font-mono text-[0.8em]">~/.cursor/skills-cursor</code>,{" "}
+              <code className="font-mono text-[0.8em]">~/.config/opencode/skills</code>, and{" "}
               <code className="font-mono text-[0.8em]">~/.openclaw/skills</code>.
             </p>
           ) : (

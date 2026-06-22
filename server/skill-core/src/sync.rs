@@ -38,8 +38,8 @@ const DESTS: [Dest; 2] = [
     Dest {
         id: "universal",
         label: "All agents (Agent Skills standard)",
-        cohort: &[".agents/skills", ".codex/skills", ".cursor/skills"],
-        reaches: &["Codex", "Cursor", "Gemini CLI"],
+        cohort: &[".agents/skills", ".codex/skills", ".cursor/skills", ".config/opencode/skills"],
+        reaches: &["Codex", "Cursor", "Gemini CLI", "opencode"],
     },
     Dest {
         id: "claude-code",
@@ -134,6 +134,7 @@ pub fn agent_user_dir(agent: &str) -> Option<PathBuf> {
         "Codex" => ".codex/skills",
         "Cursor" => ".cursor/skills",
         "OpenClaw" => ".openclaw/skills",
+        "opencode" => ".config/opencode/skills",
         _ => return None,
     };
     Some(home.join(rel))
@@ -678,6 +679,7 @@ mod tests {
         assert!(agent_user_dir("Codex").unwrap().ends_with(".codex/skills"));
         assert!(agent_user_dir("Cursor").unwrap().ends_with(".cursor/skills"));
         assert!(agent_user_dir("OpenClaw").unwrap().ends_with(".openclaw/skills"));
+        assert!(agent_user_dir("opencode").unwrap().ends_with(".config/opencode/skills"));
         assert!(agent_user_dir("Nope").is_none());
     }
 

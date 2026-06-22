@@ -62,6 +62,12 @@ pub fn run_connect(state: Arc<Mutex<State>>, host: String, generation: u64, app_
             });
             s.status = RemoteStatus { state: "connected".into(), host: Some(host.clone()), message: None };
             s.session = Some(sess);
+            // Remember this host so the next launch auto-reconnects (VS Code-style).
+            // Persist UNDER the lock so it's atomic with the generation check above —
+            // a concurrent disconnect can't slip in and have us re-persist a host it
+            // just cleared. Only persisted now that we're fully connected.
+            s.last_host = Some(host.clone());
+            super::lastconn::remember(&host);
             drop(s);
             // Watch the ssh child: if it dies (network loss, remote crash), clear the
             // session so the UI falls back to Local instead of proxying a dead tunnel.
@@ -70,6 +76,14 @@ pub fn run_connect(state: Arc<Mutex<State>>, host: String, generation: u64, app_
         Err(e) => {
             s.target = None;
             s.session = None;
+            // Hybrid resume policy: if the host we just failed to reach IS the
+            // remembered resume host, forget it — a genuinely-dead host auto-clears
+            // after one failed launch attempt, while an unrelated failed connect
+            // leaves the memory intact (we still resume the host that last worked).
+            if s.last_host.as_deref() == Some(host.as_str()) {
+                s.last_host = None;
+                super::lastconn::forget();
+            }
             s.status = RemoteStatus { state: "error".into(), host: Some(host), message: Some(e) };
         }
     }

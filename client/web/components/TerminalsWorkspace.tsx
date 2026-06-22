@@ -266,7 +266,7 @@ export default function TerminalsWorkspace({
                 <p className="px-2 py-3 text-sm text-muted">Loading…</p>
               ) : sessions.length === 0 ? (
                 <p className="px-2 py-3 text-xs leading-relaxed text-muted">
-                  No terminals yet. Start one to run Claude Code, Codex, or a shell on this machine.
+                  No terminals yet. Start one to run Claude Code, Codex, opencode, or a shell on this machine.
                 </p>
               ) : (
                 <ul className="space-y-1">

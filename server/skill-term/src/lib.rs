@@ -976,6 +976,20 @@ fn agent_specs() -> Vec<Spec> {
             cli_paths: &["~/.codex/packages/standalone/current/codex"],
             install_dir_env: "CODEX_INSTALL_DIR",
         },
+        Spec {
+            agent: "opencode",
+            label: "opencode",
+            path_name: "opencode",
+            supports_ide: false,
+            // No CLI-bundling editor extension to probe; an empty prefix is the
+            // signal `ext_finds` uses to skip the editor-roots scan entirely.
+            ext_prefix: "",
+            ext_rel: ExtRel::File(""),
+            // The install script's default target ($HOME/.opencode/bin); other
+            // install paths land on PATH or in the dirs `resolve_cli` already probes.
+            cli_paths: &["~/.opencode/bin/opencode"],
+            install_dir_env: "OPENCODE_INSTALL_DIR",
+        },
     ]
 }
 
@@ -1045,6 +1059,11 @@ fn bin_version(bin: &str) -> Option<String> {
 /// Locate an agent's extension-bundled binary across known editor roots.
 /// Returns `(editor_label, abs_path)` pairs, deduped by path, latest version first.
 fn ext_finds(spec: &Spec) -> Vec<(&'static str, String)> {
+    // An empty prefix would `starts_with`-match every extension dir; agents with
+    // no CLI-bundling editor extension opt out of the scan this way.
+    if spec.ext_prefix.is_empty() {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (label, root) in editor_roots() {

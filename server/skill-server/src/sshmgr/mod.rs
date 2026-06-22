@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{RemoteControl, RemoteHost, RemoteStatus, RemoteTarget};
 
+mod lastconn;
 mod provision;
 mod session;
 mod ssh;
@@ -26,6 +27,10 @@ struct State {
     session: Option<session::Session>,
     busy: bool,
     generation: u64,
+    /// The host to auto-reconnect to on launch — loaded from disk at startup, updated
+    /// on a successful connect, cleared on an explicit disconnect. The client reads it
+    /// (`/api/remote/last`) and drives the resume through the normal connect path.
+    last_host: Option<String>,
 }
 
 fn idle_status() -> RemoteStatus {
@@ -58,14 +63,16 @@ impl SshRemoteControl {
                 session: None,
                 busy: false,
                 generation: 0,
+                last_host: lastconn::load(),
             })),
             app_version,
         }
     }
 
     /// Tear down any live session on app exit (no orphaned remote server / tunnel).
+    /// `forget=false`: keep the remembered host so the next launch resumes it.
     pub fn shutdown(&self) {
-        let _ = self.disconnect();
+        let _ = self.disconnect(false);
     }
 }
 
@@ -80,6 +87,10 @@ impl RemoteControl for SshRemoteControl {
 
     fn active_target(&self) -> Option<RemoteTarget> {
         self.state.lock().unwrap().target.clone()
+    }
+
+    fn last_host(&self) -> Option<String> {
+        self.state.lock().unwrap().last_host.clone()
     }
 
     fn connect(&self, host: &str) -> Result<(), String> {
@@ -107,14 +118,23 @@ impl RemoteControl for SshRemoteControl {
         Ok(())
     }
 
-    fn disconnect(&self) -> Result<(), String> {
+    fn disconnect(&self, forget: bool) -> Result<(), String> {
         let mut s = self.state.lock().unwrap();
-        s.generation += 1; // invalidate any in-flight connect
+        // Bump the generation BEFORE clearing: this same lock both supersedes any
+        // in-flight connect (so it won't re-persist the host) and clears last_host,
+        // closing the race where a connect finishing mid-disconnect resurrects it.
+        s.generation += 1;
         s.busy = false;
         s.target = None;
+        if forget {
+            s.last_host = None;
+        }
         s.status = idle_status();
         let sess = s.session.take();
         drop(s);
+        if forget {
+            lastconn::forget();
+        }
         if let Some(mut sess) = sess {
             sess.teardown();
         }

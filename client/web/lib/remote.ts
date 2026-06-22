@@ -140,6 +140,39 @@ export function useRemote(): RemoteSnapshot & {
   return { ...snap, connect, disconnect, cancel };
 }
 
+// Auto-reconnect on launch (VS Code-style). The server remembers the host we last
+// connected to (and didn't explicitly disconnect from); if we're currently Local,
+// reconnect to it through the NORMAL connect path — so the same pendingConnect→reload
+// rebinds the whole window (skills, files, git, secrets, terminals, recents) to the
+// remote. At most once per launch: sessionStorage survives the connect-triggered
+// reload but resets on a fresh app start, so disconnecting stays Local for the session.
+const RESUME_KEY = "skillstudio-remote-resumed";
+async function maybeResume(): Promise<void> {
+  if (!snapshot.available) return; // this server has no remoting
+  if (snapshot.status.state !== "idle") return; // already connecting/connected/errored
+  try {
+    if (sessionStorage.getItem(RESUME_KEY)) return; // already attempted this launch
+  } catch {
+    return;
+  }
+  let host: string | null = null;
+  try {
+    host = (await api.remoteLast()).host;
+  } catch {
+    return; // couldn't read the remembered host — stay Local
+  }
+  if (!host) return; // last state was Local → stay Local
+  try {
+    sessionStorage.setItem(RESUME_KEY, host);
+  } catch {
+    /* private mode — the idle guard above still bounds re-entry */
+  }
+  void connect(host).catch(() => {
+    /* failure flips status to "error"; the menu surfaces it, the user can retry */
+  });
+}
+
 // Resolve availability + current status on first import (cold start / post-reload),
-// so the pill is correct immediately and a still-connecting session keeps polling.
-void refresh();
+// so the pill is correct immediately and a still-connecting session keeps polling,
+// then resume the last connection if we came up Local.
+void refresh().then(maybeResume);

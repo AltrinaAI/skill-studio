@@ -171,6 +171,7 @@ struct Groups {
     codex: Vec<DiscoveredSkill>,
     cursor: Vec<DiscoveredSkill>,
     openclaw: Vec<DiscoveredSkill>,
+    opencode: Vec<DiscoveredSkill>,
     shared: Vec<DiscoveredSkill>,
 }
 
@@ -180,6 +181,7 @@ fn push_to_agent(g: &mut Groups, agent: &str, skill: DiscoveredSkill) {
         "Codex" => g.codex.push(skill),
         "Cursor" => g.cursor.push(skill),
         "OpenClaw" => g.openclaw.push(skill),
+        "opencode" => g.opencode.push(skill),
         "Agent Skills" => g.shared.push(skill),
         _ => {}
     }
@@ -190,10 +192,11 @@ fn push_to_agent(g: &mut Groups, agent: &str, skill: DiscoveredSkill) {
 // where <marker> is an agent's project dotdir. We walk the home tree, pruning the
 // usual build/dependency dirs (and every non-marker dotdir), to find them.
 
-const PROJECT_MARKERS: [(&str, &str); 5] = [
+const PROJECT_MARKERS: [(&str, &str); 6] = [
     (".claude", "Claude Code"),
     (".cursor", "Cursor"),
     (".codex", "Codex"),
+    (".opencode", "opencode"),
     // Cross-agent shared standard — surfaced under "Agent Skills" to match the
     // home-level `~/.agents`/`~/.agent` scan, not under any single agent.
     (".agents", "Agent Skills"),
@@ -328,8 +331,12 @@ pub fn discover_all() -> Result<Vec<AgentSkills>, String> {
     // OpenClaw — personal/local roots (bundled skills live in the read-only install dir).
     collect(&home.join(".openclaw/skills"), &|_: &Path| "personal", &mut g.openclaw, &mut seen);
 
-    // Agent Skills standard shared dir — read by Codex, Cursor, Gemini CLI, and the
-    // broader cohort. Its own group so a skill synced here isn't mislabeled as one
+    // opencode — its own global skills under ~/.config/opencode/skills (it also
+    // reads the shared standard and ~/.claude/skills, collected under their groups).
+    collect(&home.join(".config/opencode/skills"), &|_: &Path| "personal", &mut g.opencode, &mut seen);
+
+    // Agent Skills standard shared dir — read by Codex, Cursor, Gemini CLI, opencode,
+    // and the broader cohort. Its own group so a skill synced here isn't mislabeled as one
     // agent's. `.agent` (singular) is the minority variant (e.g. Antigravity).
     collect(&home.join(".agents/skills"), &|_: &Path| "personal", &mut g.shared, &mut seen);
     collect(&home.join(".agent/skills"), &|_: &Path| "personal", &mut g.shared, &mut seen);
@@ -344,6 +351,7 @@ pub fn discover_all() -> Result<Vec<AgentSkills>, String> {
         AgentSkills { agent: "Codex".into(), skills: g.codex },
         AgentSkills { agent: "Cursor".into(), skills: g.cursor },
         AgentSkills { agent: "OpenClaw".into(), skills: g.openclaw },
+        AgentSkills { agent: "opencode".into(), skills: g.opencode },
     ])
 }
 
@@ -507,7 +515,7 @@ mod tests {
     #[test]
     fn live_discovery_smoke() {
         let groups = discover_all().expect("discovery should not error");
-        assert_eq!(groups.len(), 5, "one group per agent + the shared Agent Skills dir");
+        assert_eq!(groups.len(), 6, "one group per agent + the shared Agent Skills dir");
         let total: usize = groups.iter().map(|g| g.skills.len()).sum();
         println!("\n=== live discovery: {total} skill(s) across {} agents ===", groups.len());
         for g in &groups {

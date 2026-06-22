@@ -22,7 +22,8 @@ use std::thread;
 
 use serde_json::{json, Value};
 use skill_core::{
-    commit_agent, commitmsg, discover, engine, github, gitops, mining, secrets, skill, sync, update,
+    commit_agent, commitmsg, discover, engine, github, gitops, mining, recents, secrets, skill,
+    sync, update,
 };
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -154,9 +155,19 @@ pub struct RemoteTarget {
 pub trait RemoteControl: Send + Sync {
     fn list_hosts(&self) -> Result<Vec<RemoteHost>, String>;
     fn connect(&self, host: &str) -> Result<(), String>;
-    fn disconnect(&self) -> Result<(), String>;
+    /// Tear down the live session. `forget` also clears the remembered resume host —
+    /// atomically with invalidating any in-flight connect — so an explicit user
+    /// disconnect starts Local next launch. App-exit teardown passes `false`, so
+    /// quitting while connected still resumes next time.
+    fn disconnect(&self, forget: bool) -> Result<(), String>;
     fn status(&self) -> RemoteStatus;
     fn active_target(&self) -> Option<RemoteTarget>;
+    /// The host to auto-reconnect to on launch (the last one we connected to and never
+    /// explicitly disconnected from), or `None` to start Local. The client reads this
+    /// (`GET /api/remote/last`) and drives the resume through the normal connect path.
+    fn last_host(&self) -> Option<String> {
+        None
+    }
 }
 
 /// How to run the server. Build with `..Default::default()` and override fields.
@@ -854,6 +865,15 @@ fn handle(method: &Method, url: &str, body: &str, ctx: &ServerCtx) -> Reply {
         (Method::Post, "/api/update/apply") => {
             json_reply(update::apply().map(|_| json!({ "ok": true })))
         }
+        // Recently opened skills/markdown. A NORMAL /api/* route (not short-circuited
+        // like /api/remote/*): while connected it proxies to the remote, so recents
+        // belong to whichever machine you're working on — same list whether you reach
+        // it locally or over SSH.
+        (Method::Get, "/api/recents") => json_reply(Ok(recents::list())),
+        (Method::Post, "/api/recents-add") => {
+            json_reply(recents::add(&s("root"), &s("name"), v.get("kind").and_then(|x| x.as_str())))
+        }
+        (Method::Post, "/api/recents-remove") => json_reply(recents::remove(&s("root"))),
         (Method::Get, "/api/secrets-status") => json_reply(secrets::secrets_status()),
         (Method::Get, "/api/secrets-list") => json_reply(secrets::secrets_list()),
         (Method::Post, "/api/secret-set") => {

@@ -32,12 +32,15 @@ struct Agent {
     skill_dirs: &'static [&'static str],
 }
 
-const AGENTS: [Agent; 5] = [
+const AGENTS: [Agent; 6] = [
     Agent { name: "Claude Code", home_dotdir: ".claude", skill_dirs: &[".claude/skills"] },
     Agent { name: "Codex", home_dotdir: ".codex", skill_dirs: &[".agents/skills", ".codex/skills"] },
     Agent { name: "Cursor", home_dotdir: ".cursor", skill_dirs: &[".agents/skills", ".cursor/skills"] },
     Agent { name: "Gemini CLI", home_dotdir: ".gemini", skill_dirs: &[".agents/skills", ".gemini/skills"] },
     Agent { name: "OpenClaw", home_dotdir: ".openclaw", skill_dirs: &[".openclaw/skills"] },
+    // opencode's config home is ~/.config/opencode; it reads the shared standard
+    // (one copy there covers it) plus its own ~/.config/opencode/skills.
+    Agent { name: "opencode", home_dotdir: ".config/opencode", skill_dirs: &[".agents/skills", ".config/opencode/skills"] },
 ];
 
 /// Canonical locations bundled skills are installed into, each gated by the
@@ -51,7 +54,7 @@ pub(crate) struct InstallDest {
 }
 
 pub(crate) const INSTALL_DESTS: [InstallDest; 3] = [
-    InstallDest { skills_rel: ".agents/skills", triggers: &[".agents", ".codex", ".cursor", ".gemini"] },
+    InstallDest { skills_rel: ".agents/skills", triggers: &[".agents", ".codex", ".cursor", ".gemini", ".config/opencode"] },
     InstallDest { skills_rel: ".claude/skills", triggers: &[".claude"] },
     InstallDest { skills_rel: ".openclaw/skills", triggers: &[".openclaw"] },
 ];

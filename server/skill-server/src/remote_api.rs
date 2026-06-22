@@ -20,6 +20,9 @@ pub fn handle(method: &Method, path: &str, body: &str, ctx: &ServerCtx) -> Reply
             Err(e) => err(400, &e),
         },
         (Method::Get, "/api/remote/status") => ok(&remote.status()),
+        // The host to auto-reconnect to on launch (VS Code-style). Always handled
+        // locally — it's THIS machine's connection memory, not the remote's.
+        (Method::Get, "/api/remote/last") => ok(&json!({ "host": remote.last_host() })),
         (Method::Post, "/api/remote/connect") => {
             let host = v.get("host").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
             if host.is_empty() {
@@ -38,10 +41,16 @@ pub fn handle(method: &Method, path: &str, body: &str, ctx: &ServerCtx) -> Reply
                 Err(e) => err(400, &e),
             }
         }
-        (Method::Post, "/api/remote/disconnect") => match remote.disconnect() {
-            Ok(()) => ok(&json!({ "ok": true })),
-            Err(e) => err(400, &e),
-        },
+        (Method::Post, "/api/remote/disconnect") => {
+            // An explicit disconnect means "I want Local" — `disconnect(true)` also
+            // forgets the remembered resume host (atomically with invalidating any
+            // in-flight connect) so the next launch starts Local. App-exit teardown
+            // calls `disconnect(false)`, so quitting while connected still resumes.
+            match remote.disconnect(true) {
+                Ok(()) => ok(&json!({ "ok": true })),
+                Err(e) => err(400, &e),
+            }
+        }
         _ => err(404, "Not found"),
     }
 }

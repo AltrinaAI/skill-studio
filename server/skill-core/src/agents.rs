@@ -22,7 +22,7 @@
 use crate::secrets::sh_quote as q;
 
 /// Home-relative dirs of the shared Agent Skills standard, read by every
-/// `reads_shared` agent (Codex, Cursor, Gemini CLI, …; not Claude Code).
+/// `reads_shared` agent (Codex, Cursor, Gemini CLI, opencode, …; not Claude Code).
 pub const SHARED_SKILLS_DIRS: &[&str] = &[".agents/skills", ".agent/skills"];
 
 /// Context for building an interactive launch line: the agent's TUI in the
@@ -98,6 +98,17 @@ pub const AGENTS: &[AgentDef] = &[
         reads_shared: false,
         launch: None,
         resume: None,
+    },
+    AgentDef {
+        // opencode keeps its own global skills under ~/.config/opencode/skills and
+        // also reads the shared standard (and ~/.claude/skills, covered by Claude's
+        // own entry).
+        family: "opencode",
+        label: "opencode",
+        skills_dirs: &[".config/opencode/skills"],
+        reads_shared: true,
+        launch: Some(opencode_launch),
+        resume: Some(opencode_resume),
     },
 ];
 
@@ -240,6 +251,33 @@ fn gemini_resume(c: &ResumeCtx) -> String {
     cmd
 }
 
+// ────────────────────────────────── opencode ──────────────────────────────────
+
+/// The TUI with `--prompt` pre-submitting the first message — the base `opencode`
+/// command is interactive (`opencode run` is the headless mode we avoid, like
+/// claude's `-p`). Model is `-m provider/model`. No `--add-dir`: opencode reads
+/// the global skills dirs (shared standard, ~/.claude/skills, its own) natively,
+/// and reasoning effort (`--variant`) is provider-specific and left to defaults.
+fn opencode_launch(c: &LaunchCtx) -> String {
+    let mut cmd = q(c.bin).to_string();
+    if let Some(m) = c.model {
+        cmd.push_str(&format!(" -m {}", q(m)));
+    }
+    cmd.push_str(&format!(" --prompt {}", q(c.prompt)));
+    cmd
+}
+
+/// `--continue` reopens the most recent session for the cwd's project, the same
+/// cwd-scoped contract as claude's `--continue`.
+fn opencode_resume(c: &ResumeCtx) -> String {
+    let mut cmd = q(c.bin).to_string();
+    if let Some(m) = c.model {
+        cmd.push_str(&format!(" -m {}", q(m)));
+    }
+    cmd.push_str(" --continue");
+    cmd
+}
+
 // ─────────────────────────────────── tests ───────────────────────────────────
 
 #[cfg(test)]
@@ -250,16 +288,18 @@ mod tests {
     fn registry_lookup_accepts_ids_and_families() {
         assert_eq!(by_family("claude").unwrap().label, "Claude Code");
         assert_eq!(by_family("codex:cli").unwrap().label, "Codex");
+        assert_eq!(by_family("opencode:cli").unwrap().label, "opencode");
         assert!(by_family("shell").is_none());
         assert!(can_launch("claude:cli") && can_launch("codex"));
         assert!(can_launch("cursor") && can_launch("gemini"));
+        assert!(can_launch("opencode:cli"));
         assert!(!can_launch("openclaw") && !can_launch("shell"));
     }
 
     #[test]
     fn all_skills_dirs_unions_shared_and_own() {
         let dirs = all_skills_dirs();
-        for d in [".agents/skills", ".claude/skills", ".codex/skills", ".cursor/skills"] {
+        for d in [".agents/skills", ".claude/skills", ".codex/skills", ".cursor/skills", ".config/opencode/skills"] {
             assert!(dirs.contains(&d), "missing {d}");
         }
         let dedup: std::collections::HashSet<_> = dirs.iter().collect();
@@ -277,5 +317,24 @@ mod tests {
         let ctx = ResumeCtx { bin: "/bin/gemini", model: Some("pro"), effort: None };
         // -m before --resume: --resume takes an optional value and would eat it.
         assert_eq!(gemini_resume(&ctx), "'/bin/gemini' -m 'pro' --resume");
+
+        let ctx = ResumeCtx { bin: "/bin/opencode", model: None, effort: None };
+        assert_eq!(opencode_resume(&ctx), "'/bin/opencode' --continue");
+    }
+
+    #[test]
+    fn opencode_launch_uses_prompt_flag_not_a_positional() {
+        // The prompt rides --prompt (the base TUI is interactive); model is
+        // -m provider/model; there is no --add-dir.
+        let ctx = LaunchCtx {
+            bin: "/bin/opencode",
+            prompt: "do the thing",
+            model: Some("anthropic/claude-sonnet-4-6"),
+            effort: Some("high"),
+        };
+        assert_eq!(
+            opencode_launch(&ctx),
+            "'/bin/opencode' -m 'anthropic/claude-sonnet-4-6' --prompt 'do the thing'"
+        );
     }
 }

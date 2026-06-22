@@ -112,8 +112,25 @@ export interface RemoteStatus {
 }
 export const remoteList = () => http<RemoteHost[]>("GET", "remote/list");
 export const remoteStatus = () => http<RemoteStatus>("GET", "remote/status");
+/** The host to auto-reconnect to on launch (the last one connected, VS Code-style),
+ *  or null to start Local. THIS machine's connection memory — never proxied. */
+export const remoteLast = () => http<{ host: string | null }>("GET", "remote/last");
 export const remoteConnect = (host: string) => http<{ ok: boolean }>("POST", "remote/connect", { host });
 export const remoteDisconnect = () => http<{ ok: boolean }>("POST", "remote/disconnect");
+
+// --- recents (server-side; a NORMAL /api/* route, so it follows the active server —
+//     each machine has its own list, the same whether reached locally or over SSH) ---
+export interface Recent {
+  /** The opened skill folder, or a loose markdown file's absolute path. Dedup key. */
+  root: string;
+  name: string;
+  /** "skill" (default when absent) routes via studioPath; "markdown" via markdownPath. */
+  kind?: "skill" | "markdown";
+}
+export const recentsList = () => http<Recent[]>("GET", "recents");
+export const recentsAdd = (r: Recent) =>
+  http<Recent[]>("POST", "recents-add", { root: r.root, name: r.name, kind: r.kind });
+export const recentsRemove = (root: string) => http<Recent[]>("POST", "recents-remove", { root });
 
 // --- app auto-update (the server checks GitHub releases; the desktop shell installs) ---
 export interface UpdateAvailable {
@@ -460,8 +477,8 @@ export const gitLog = (root: string, limit = 20) => http<GitCommit[]>("POST", "g
  *  can show "using your Claude login", a log-in hint, or the one-time on-device
  *  model download note. */
 export interface CommitModelStatus {
-  /** Active backend: "claude" | "codex" | "gemini" | "llama" | "none". */
-  backend: "claude" | "codex" | "gemini" | "llama" | "none";
+  /** Active backend: "claude" | "codex" | "gemini" | "opencode" | "llama" | "none". */
+  backend: "claude" | "codex" | "gemini" | "opencode" | "llama" | "none";
   /** A draft can be produced right now (logged-in CLI, or downloaded model). */
   ready: boolean;
   /** A supported CLI is installed but not logged in — hint the user to log in. */

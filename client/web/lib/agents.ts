@@ -9,6 +9,7 @@ export const AGENT_COLORS: Record<string, string> = {
   Cursor: "#7c83ff",
   OpenClaw: "#a855f7",
   "Gemini CLI": "#4285f4",
+  opencode: "#f59e0b",
   // The Agent Skills standard shared dir (~/.agents/skills), read by many agents.
   "Agent Skills": "#0ea5e9",
 };
@@ -29,7 +30,7 @@ export interface AgentGroupInfo {
 
 export const AGENT_GROUP_INFO: Record<string, AgentGroupInfo> = {
   "Agent Skills": {
-    sharedWith: ["Codex", "Cursor", "Gemini CLI"],
+    sharedWith: ["Codex", "Cursor", "Gemini CLI", "opencode"],
     excludes: ["Claude Code"],
   },
 };
@@ -39,6 +40,9 @@ const PATH_RULES: [RegExp, string][] = [
   [/(^|\/)\.codex(\/|$)/, "Codex"],
   [/(^|\/)\.cursor(\/|$)/, "Cursor"],
   [/(^|\/)\.openclaw(\/|$)/, "OpenClaw"],
+  // opencode: its global skills home (~/.config/opencode) and the project marker.
+  [/(^|\/)\.config\/opencode(\/|$)/, "opencode"],
+  [/(^|\/)\.opencode(\/|$)/, "opencode"],
   // The Agent Skills standard shared dirs, ~/.agents/skills (and the singular variant).
   [/(^|\/)\.agents?(\/|$)/, "Agent Skills"],
 ];

@@ -199,6 +199,7 @@ tag matches the app version (CI builds static-musl + macOS binaries — see
 
 ## Roadmap
 
+- **Kill Rust↔TS wire-type drift:** generate the `api.ts` DTOs from the serde structs (`ts-rs`) + a CI drift-check.
 - **Skill-usage feedback loop (mining, next stage).** The skill-miner parsers already
   extract `skills_used` per session (with `[skill used: X]` markers interleaved in the
   condensed transcript), and the distill stage summarizes each session's explicit user

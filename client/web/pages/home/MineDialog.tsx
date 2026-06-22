@@ -14,14 +14,19 @@ const WINDOWS = [7, 14, 35, 90];
 // model_reasoning_effort) and model choices ("Custom…" takes any model id).
 // Empty selection = the user's own CLI defaults. claude's list omits haiku:
 // mining runs use the CLI's auto permission mode, which only Opus/Sonnet 4.6+
-// support — a haiku run would die at startup.
+// support — a haiku run would die at startup. opencode is intentionally absent
+// here: its reasoning effort (`--variant`) is provider-specific, so we leave it
+// to the agent's own default rather than guess a value.
 const EFFORTS: Record<string, string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["low", "medium", "high", "xhigh"],
 };
+// opencode addresses models as `provider/model`; these are representative
+// examples (any configured provider/model id works via "Custom…").
 const MODEL_SUGGESTIONS: Record<string, string[]> = {
   claude: ["fable", "opus", "sonnet"],
   codex: ["gpt-5.5"],
+  opencode: ["anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
 };
 const CUSTOM_MODEL = "__custom__";
 
