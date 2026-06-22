@@ -46,7 +46,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="modal-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onPointerDown={(e) => {
         pressedBackdrop.current = e.target === e.currentTarget;
       }}
@@ -55,7 +55,7 @@ export function Modal({
       }}
     >
       <div
-        className={`flex w-full ${widthClass} flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl`}
+        className={`modal-in flex w-full ${widthClass} flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-5 py-3">

@@ -59,18 +59,18 @@ function RefreshIcon({ className = "" }: { className?: string }) {
 }
 const gridCls = "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4";
 const cardCls =
-  "group flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-3.5 text-left transition-colors hover:border-border-strong hover:bg-panel";
+  "group flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-border-strong hover:bg-panel hover:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]";
 // A skill with uncommitted changes is "pending review" like a proposed skill, so
 // it wears the same tinted-border treatment — in amber (its CHANGES tone) rather
 // than the proposed card's green — so the two read as one family of review cards.
 const dirtyCardCls =
-  "group flex flex-col gap-1.5 rounded-xl border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--warning)_6%,var(--surface))] p-3.5 text-left transition-colors hover:border-[color-mix(in_srgb,var(--warning)_60%,transparent)] hover:bg-[color-mix(in_srgb,var(--warning)_12%,var(--surface))]";
+  "group flex flex-col gap-1.5 rounded-xl border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--warning)_6%,var(--surface))] p-4 text-left transition-all hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--warning)_60%,transparent)] hover:bg-[color-mix(in_srgb,var(--warning)_12%,var(--surface))] hover:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]";
 // Proposed cards wear a green-tinted border to stand apart in the grid. The card
 // body opens the skill (same click-to-open as a normal card), but Accept /
 // Discard live below as their own buttons — so the root stays a container, not a
 // single button. Mirrors the SkillCard look (h-full, hover) so they sit flush.
 const proposedCardCls =
-  "group flex h-full flex-col gap-1.5 rounded-xl border border-[color-mix(in_srgb,var(--ok)_40%,transparent)] bg-[color-mix(in_srgb,var(--ok)_6%,var(--surface))] p-3.5 text-left transition-colors hover:border-[color-mix(in_srgb,var(--ok)_60%,transparent)] hover:bg-[color-mix(in_srgb,var(--ok)_12%,var(--surface))]";
+  "group flex h-full flex-col gap-1.5 rounded-xl border border-[color-mix(in_srgb,var(--ok)_40%,transparent)] bg-[color-mix(in_srgb,var(--ok)_6%,var(--surface))] p-4 text-left transition-all hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--ok)_60%,transparent)] hover:bg-[color-mix(in_srgb,var(--ok)_12%,var(--surface))] hover:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]";
 const pillCls = "shrink-0 rounded-full px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide";
 
 function CheckIcon() {
@@ -148,7 +148,7 @@ function SkillCard({
           sibling cards equal-height with the delete control at the real bottom. */}
       <button type="button" onClick={() => onOpen(skill.root)} className={`${dirty ? dirtyCardCls : cardCls} h-full w-full`}>
         <div className="flex items-center gap-2">
-          <FolderIcon open={false} name={name} />
+          <FolderIcon open={false} name={name} size={18} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{name}</span>
           {dirty && <ChangesTag />}
           <span className={`${pillCls} ${tag.cls}`}>
@@ -391,7 +391,7 @@ function ProposedCard({
           for the path holds Accept / Discard here, keeping both the same height. */}
       <button type="button" onClick={() => onOpen(skill.root)} className="flex flex-1 flex-col gap-1.5 text-left">
         <div className="flex items-center gap-2">
-          <FolderIcon open={false} name={name} />
+          <FolderIcon open={false} name={name} size={18} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{name}</span>
           <ProposedTag />
         </div>
@@ -600,7 +600,7 @@ function RecentCard({ r, onOpen, onRemove }: { r: Recent; onOpen: () => void; on
       <button
         type="button"
         onClick={onOpen}
-        className="flex h-full w-full flex-col gap-1 rounded-xl border border-border bg-surface p-3 pr-8 text-left transition-colors hover:border-border-strong hover:bg-panel"
+        className="flex h-full w-full flex-col gap-1 rounded-xl border border-border bg-surface p-3 pr-8 text-left transition-all hover:-translate-y-0.5 hover:border-border-strong hover:bg-panel hover:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]"
       >
         <span className="flex min-w-0 items-center gap-2">
           {/* Folder vs file icon, as in the gallery — a loose markdown file reads

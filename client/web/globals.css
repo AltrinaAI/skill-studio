@@ -152,6 +152,24 @@ body {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Dialog entrance — a short fade + scale for the shared Modal shell       */
+/* ---------------------------------------------------------------------- */
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+.modal-backdrop-in { animation: modal-backdrop-in 0.16s ease-out; }
+.modal-in { animation: modal-in 0.16s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop-in,
+  .modal-in { animation: none; }
+}
+
+/* ---------------------------------------------------------------------- */
 /* CodeMirror live editor — the document surface                          */
 /* ---------------------------------------------------------------------- */
 .cm-editor {

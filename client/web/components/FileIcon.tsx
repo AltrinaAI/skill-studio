@@ -28,14 +28,14 @@ function Img({ icon, fallback, size = 16 }: { icon: string; fallback: string; si
   );
 }
 
-export function FileIcon({ name }: { name: string }) {
-  return <Img icon={getIconForFilePath(name)} fallback="document" />;
+export function FileIcon({ name, size = 16 }: { name: string; size?: number }) {
+  return <Img icon={getIconForFilePath(name)} fallback="document" size={size} />;
 }
 
 /** Folder icon (open / closed) — Material ships an `-open` variant per folder. */
-export function FolderIcon({ open, name }: { open: boolean; name: string }) {
+export function FolderIcon({ open, name, size = 16 }: { open: boolean; name: string; size?: number }) {
   const base = getIconForDirectoryPath(name);
-  return <Img icon={open ? `${base}-open` : base} fallback={open ? "folder-open" : "folder"} />;
+  return <Img icon={open ? `${base}-open` : base} fallback={open ? "folder-open" : "folder"} size={size} />;
 }
 
 /** Altrina brand mark (the hexagon-in-hexagon emblem) — monochrome via
