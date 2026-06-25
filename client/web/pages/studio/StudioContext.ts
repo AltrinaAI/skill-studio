@@ -29,6 +29,12 @@ export interface StudioContextValue {
    *  (docVersion) unless it's mid-edit. Pass `force` to remount regardless (used
    *  when the working tree was deliberately swapped, e.g. a version transition). */
   reload: (force?: boolean) => void;
+  /** Re-read the skill from disk WITHOUT remounting the editor — for additive,
+   *  out-of-band changes that don't touch the open buffer (e.g. a pasted image
+   *  landed a new file under `assets/`). Refreshes the file tree, the validator's
+   *  file list, and the git panels (the new file is an untracked change), but
+   *  never bumps docVersion, so an in-progress edit is left untouched. */
+  refreshData: () => void;
   /** Non-null while VIEWING a past version: its content is checked out into the
    *  working tree, so the whole editor renders it. */
   preview: VersionPreview | null;

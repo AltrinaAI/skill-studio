@@ -12,6 +12,7 @@ use crate::filetypes;
 use crate::pathsafe::{normalize_lexical, resolve_root, resolve_within_real};
 
 const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024; // 2 MB
+const MAX_ASSET_BYTES: usize = 25 * 1024 * 1024; // 25 MB — pasted/dropped media
 const MAX_TREE_ENTRIES: i64 = 5000;
 const MAX_TOTAL: u64 = 100 * 1024 * 1024; // 100 MB zip cap
 const IGNORED_DIRS: [&str; 5] = [".git", "node_modules", ".next", "__pycache__", ".venv"];
@@ -287,6 +288,65 @@ pub fn write_file_impl(root: &str, rel: &str, content: &str) -> Result<(), Strin
     }
     std::fs::write(&abs, content).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Reduce a client/clipboard-supplied filename to a safe `(stem, ext)`: drop any
+/// directory part, lowercase the extension, and replace anything outside
+/// `[A-Za-z0-9._-]` with `-` so the on-disk name stays predictable and link-safe.
+/// Empty stem → "image"; empty ext → "png" (the paste path always carries one).
+fn split_asset_name(name: &str) -> (String, String) {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let (stem, ext) = match base.rfind('.') {
+        Some(i) if i > 0 => (&base[..i], &base[i + 1..]),
+        _ => (base, ""),
+    };
+    let sanitize = |s: &str, fallback: &str| {
+        let cleaned: String = s
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
+            .collect();
+        let trimmed = cleaned.trim_matches(['-', '.']);
+        if trimmed.is_empty() { fallback.to_string() } else { trimmed.to_string() }
+    };
+    (sanitize(stem, "image"), sanitize(&ext.to_lowercase(), "png"))
+}
+
+/// Write a binary asset (base64) into the skill under `dir`, choosing a filename
+/// derived from `name` that doesn't clobber an existing file (`stem.ext`, then
+/// `stem-1.ext`, `stem-2.ext`, …). Returns the path written relative to `root`
+/// (POSIX) — ready to drop into a markdown link. Mirrors [`write_file_impl`]'s
+/// sandboxing (`resolve_within_real`) but takes raw bytes; pasted media should
+/// accumulate, never overwrite, so an existing name is stepped past rather than
+/// replaced.
+pub fn write_asset_impl(root: &str, dir: &str, name: &str, data_b64: &str) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64.trim())
+        .map_err(|_| "The pasted data wasn’t valid base64.".to_string())?;
+    if bytes.is_empty() {
+        return Err("The pasted file was empty.".into());
+    }
+    if bytes.len() > MAX_ASSET_BYTES {
+        return Err("The file is too large (max 25 MB).".into());
+    }
+    let (stem, ext) = split_asset_name(name);
+    let root_path = PathBuf::from(root);
+    let dir_rel = dir.replace('\\', "/");
+    let dir_rel = dir_rel.trim_matches('/');
+    let dir_rel = if dir_rel == "." { "" } else { dir_rel };
+    for n in 0..1000 {
+        let fname = if n == 0 { format!("{stem}.{ext}") } else { format!("{stem}-{n}.{ext}") };
+        let rel = if dir_rel.is_empty() { fname } else { format!("{dir_rel}/{fname}") };
+        let abs = resolve_within_real(&root_path, &rel, false)?;
+        if abs.exists() {
+            continue;
+        }
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&abs, &bytes).map_err(|e| e.to_string())?;
+        return Ok(rel);
+    }
+    Err("Couldn’t find a free filename for the asset.".into())
 }
 
 /// Delete a file or directory inside the skill (directories are removed
@@ -664,6 +724,35 @@ mod tests {
         assert!(!md.is_dir && md.is_markdown);
         let txt = with_files.entries.iter().find(|e| e.name == "data.txt").unwrap();
         assert!(!txt.is_dir && !txt.is_markdown);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_asset_dedupes_and_sandboxes() {
+        let base = std::env::temp_dir().join(format!("ass_asset_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let root = base.to_string_lossy().to_string();
+        // 1x1 transparent PNG (base64). Real bytes so the write round-trips.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+        // First write lands at the requested name, under the asset subdir.
+        let r1 = write_asset_impl(&root, "assets", "pasted image.png", png).unwrap();
+        assert_eq!(r1, "assets/pasted-image.png");
+        assert!(base.join("assets/pasted-image.png").is_file());
+        // A second write of the same name steps past it instead of clobbering.
+        let r2 = write_asset_impl(&root, "assets", "pasted-image.png", png).unwrap();
+        assert_eq!(r2, "assets/pasted-image-1.png");
+        assert!(base.join("assets/pasted-image-1.png").is_file());
+        // "." means the skill root (no subdir).
+        let r3 = write_asset_impl(&root, ".", "logo.svg", png).unwrap();
+        assert_eq!(r3, "logo.svg");
+
+        // Traversal is rejected by the shared sandbox.
+        assert!(write_asset_impl(&root, "../escape", "x.png", png).is_err());
+        // Empty / invalid payloads are rejected.
+        assert!(write_asset_impl(&root, "assets", "x.png", "").is_err());
 
         let _ = std::fs::remove_dir_all(&base);
     }

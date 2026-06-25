@@ -24,7 +24,8 @@ import {
 import { tags as t } from "@lezer/highlight";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { imageDataUrl } from "@/lib/api";
+import { imageDataUrl, writeSkillAsset } from "@/lib/api";
+import { log } from "@/lib/log";
 
 // ---------------------------------------------------------------------------
 // Syntax highlighting — solid, comprehensive, GitHub-style palette (CSS vars
@@ -1076,6 +1077,160 @@ const imageLoader = ViewPlugin.fromClass(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Paste / drop media. Dropping or pasting an image into the editor writes the
+// bytes into the skill (an `assets/` folder beside the document) via
+// /api/write-asset and inserts a `![alt](assets/…)` link at the caret — which the
+// inline renderer above then shows as a real <img>, no reload needed. The bytes
+// cross to the server (local or remote) the same way a terminal image-paste does.
+//
+// `assetSink` is the writable target: the skill root + the document's folder
+// within it. Set only for markdown that's editable (not review mode); null leaves
+// the editor's default text paste untouched.
+// ---------------------------------------------------------------------------
+type AssetSink = { root: string; dir: string; onWrite?: () => void } | null;
+const assetSink = Facet.define<AssetSink, AssetSink>({
+  combine: (vs) => (vs.length ? vs[vs.length - 1] : null),
+});
+
+const ASSET_SUBDIR = "assets";
+
+// Clipboard image MIME → file extension. Restricted to what the renderer and the
+// server's filetypes table both understand; anything else falls through to the
+// editor's normal paste (so copied rich text still pastes as text).
+const MIME_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/bmp": "bmp",
+  "image/x-icon": "ico",
+  "image/vnd.microsoft.icon": "ico",
+  "image/svg+xml": "svg",
+};
+
+/** Image files carried by a paste/drop, preferring the explicit file list and
+ *  falling back to the item list (some browsers expose a pasted image only there). */
+function imageFilesFrom(dt: DataTransfer | null): File[] {
+  if (!dt) return [];
+  const out: File[] = [];
+  for (const f of Array.from(dt.files)) if (f.type.startsWith("image/")) out.push(f);
+  if (out.length) return out;
+  for (const it of Array.from(dt.items)) {
+    if (it.kind === "file" && it.type.startsWith("image/")) {
+      const f = it.getAsFile();
+      if (f) out.push(f);
+    }
+  }
+  return out;
+}
+
+/** A filename to write the media under: a dropped file's own name when it has an
+ *  extension, else a synthesized `pasted-image.<ext>` (clipboard images are
+ *  usually nameless). The server sanitizes and de-duplicates it. */
+function assetName(file: File): string {
+  const name = (file.name || "").trim();
+  if (name && /\.[a-z0-9]+$/i.test(name)) return name;
+  return `pasted-image.${MIME_EXT[file.type] ?? "png"}`;
+}
+
+const POSIX_DIR = (dir: string) => dir.replace(/\\/g, "/").replace(/^\.?\/?/, "").replace(/\/+$/, "");
+
+/** The `assets/` directory (relative to the skill root) the media is written to,
+ *  for a document sitting in `docDir` within the skill. */
+function assetsDirFor(docDir: string): string {
+  const d = POSIX_DIR(docDir);
+  return d ? `${d}/${ASSET_SUBDIR}` : ASSET_SUBDIR;
+}
+
+/** Re-base a root-relative path the server returned to be relative to the
+ *  document's own folder, so the link reads `assets/x.png` from any sub-document. */
+function docRelative(docDir: string, relFromRoot: string): string {
+  const d = POSIX_DIR(docDir);
+  if (!d) return relFromRoot;
+  const prefix = `${d}/`;
+  return relFromRoot.startsWith(prefix) ? relFromRoot.slice(prefix.length) : relFromRoot;
+}
+
+/** Alt text from a written path: its basename without the extension. */
+function altFromRel(rel: string): string {
+  return (rel.split("/").pop() ?? rel).replace(/\.[a-z0-9]+$/i, "");
+}
+
+// Each in-flight upload drops a uniquely-tagged placeholder; the upload then
+// swaps that exact text for the final link (or a failed marker). A plain string
+// find/replace survives unrelated edits elsewhere in the document.
+let uploadSeq = 0;
+
+/** Replace the first occurrence of `find` with `replace`, if the view is still
+ *  mounted and the placeholder hasn't been edited away. */
+function replaceOnce(view: EditorView, find: string, replace: string): void {
+  if (!view.dom.isConnected) return;
+  const i = view.state.doc.toString().indexOf(find);
+  if (i < 0) return;
+  try {
+    view.dispatch({ changes: { from: i, to: i + find.length, insert: replace } });
+  } catch {
+    /* view torn down between the read and the dispatch */
+  }
+}
+
+async function insertMedia(view: EditorView, sink: NonNullable<AssetSink>, files: File[]): Promise<void> {
+  let wrote = false;
+  for (const file of files) {
+    const token = `uploading ${file.name || "image"} ${uploadSeq++}`;
+    const placeholder = `![${token}]()`;
+    // Drop the placeholder at the caret on its own line, so the spot is visible
+    // while the bytes upload and inserts stay in reading order.
+    const sel = view.state.selection.main;
+    const atLineStart = sel.from === view.state.doc.lineAt(sel.from).from;
+    view.dispatch(view.state.replaceSelection(`${atLineStart ? "" : "\n"}${placeholder}\n`));
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const { rel } = await writeSkillAsset(sink.root, assetsDirFor(sink.dir), assetName(file), bytes);
+      replaceOnce(view, placeholder, `![${altFromRel(rel)}](${docRelative(sink.dir, rel)})`);
+      wrote = true;
+    } catch (e) {
+      log.debug("editor", "paste media failed", e instanceof Error ? e.message : String(e));
+      replaceOnce(view, placeholder, `![upload failed]()`);
+    }
+  }
+  // A new file landed under assets/ — let the host refresh the file tree + the
+  // validator's file list so the just-inserted link isn't flagged as missing.
+  if (wrote) sink.onWrite?.();
+}
+
+const mediaPaste = EditorView.domEventHandlers({
+  paste: (event, view) => {
+    const sink = view.state.facet(assetSink);
+    if (!sink) return false;
+    const files = imageFilesFrom(event.clipboardData);
+    if (!files.length) return false; // no image → let the normal text paste run
+    event.preventDefault();
+    void insertMedia(view, sink, files);
+    return true;
+  },
+  // Allow the drop by claiming the dragover when files are in flight (without it
+  // the browser would navigate to the dropped file instead of firing `drop`).
+  dragover: (event, view) => {
+    if (view.state.facet(assetSink) && Array.from(event.dataTransfer?.types ?? []).includes("Files")) {
+      event.preventDefault();
+    }
+    return false;
+  },
+  drop: (event, view) => {
+    const sink = view.state.facet(assetSink);
+    if (!sink) return false;
+    const files = imageFilesFrom(event.dataTransfer);
+    if (!files.length) return false;
+    event.preventDefault();
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+    if (pos != null) view.dispatch({ selection: { anchor: pos } });
+    void insertMedia(view, sink, files);
+    return true;
+  },
+});
+
 function buildMarkdownDecorations(state: EditorState): DecorationSet {
   const doc = state.doc;
   const tree = syntaxTree(state);
@@ -1309,6 +1464,7 @@ const markdownExtensions: Extension[] = [
   editGate,
   anchorNav,
   imageLoader,
+  mediaPaste,
   markdownBlocks,
   baseTheme,
 ];
@@ -1578,6 +1734,7 @@ export default function LiveEditor({
   baseline,
   review,
   assets,
+  onAsset,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -1587,8 +1744,13 @@ export default function LiveEditor({
   placeholder?: string;
   /** Markdown only: where relative image paths resolve, so `![alt](./x.png)`
    *  renders inline. `root` is the read-image sandbox; `dir` is the file's folder
-   *  within it ("." when the file sits at the root). Omitted → images stay raw. */
+   *  within it ("." when the file sits at the root). Omitted → images stay raw.
+   *  When present (and not in review), it also enables paste/drop-to-insert media. */
   assets?: { root: string; dir: string };
+  /** Markdown only: called after a pasted/dropped image is written into the skill,
+   *  so the host can refresh the file tree + the validator's known-files list (the
+   *  new asset would otherwise read as a missing reference until reload). */
+  onAsset?: () => void;
   /** The file's HEAD content. When defined (a tracked file), live change
    *  indicators (overview ruler + left red/green bars) track edits against it.
    *  "" = a new/untracked file (whole buffer reads as added). undefined = not
@@ -1622,6 +1784,12 @@ export default function LiveEditor({
   reviewToggleRef.current = reviewToggle;
   const onReview = useMemo(() => () => reviewToggleRef.current?.(), []);
 
+  // Same stable-wrapper trick for the asset-written callback: a fresh `onAsset`
+  // identity each render must not reconfigure the editor (it rides in a facet).
+  const onAssetRef = useRef(onAsset);
+  onAssetRef.current = onAsset;
+  const onAssetStable = useMemo(() => () => onAssetRef.current?.(), []);
+
   // Primitives (not the fresh `assets` object) so the extension memo is stable.
   const assetRoot = assets?.root;
   const assetDir = assets?.dir ?? ".";
@@ -1641,6 +1809,9 @@ export default function LiveEditor({
             // Resolve relative image paths against the file's folder so they render
             // inline; absent → images stay raw (markdownExtensions' default).
             ...(assetRoot ? [imageCtx.of({ root: assetRoot, dir: assetDir })] : []),
+            // Enable paste/drop-to-insert media — but not in review mode, where the
+            // document is being read against a diff, not authored.
+            ...(assetRoot && !review ? [assetSink.of({ root: assetRoot, dir: assetDir, onWrite: onAssetStable })] : []),
             // Folding is off in review mode (it would hide diff content).
             ...(review ? [] : headingFolding),
           ]
@@ -1668,7 +1839,7 @@ export default function LiveEditor({
       );
     }
     return exts;
-  }, [kind, codeLang, baseline, review, onReview, assetRoot, assetDir]);
+  }, [kind, codeLang, baseline, review, onReview, assetRoot, assetDir, onAssetStable]);
 
   return (
     <CodeMirror

@@ -247,7 +247,7 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
   // carries the frontmatter too, so we parse HEAD's SKILL.md and diff body-only
   // (frontmatter edits live in the form above, not the prose overlay). The
   // "Review changes" toggle lives in the nav bar; this reacts to ?diff=worktree. ---
-  const { gitVersion, preview } = useStudio();
+  const { gitVersion, preview, refreshData } = useStudio();
   const [searchParams] = useSearchParams();
   const reviewRequested = searchParams.get("diff") === "worktree";
   // Reviewing a past version diffs it against its parent (HEAD^ — HEAD is detached
@@ -423,6 +423,7 @@ export default function SkillDocument({ data, onSaved }: { data: SkillData; onSa
           baseline={headBody}
           review={reviewRequested}
           assets={{ root: data.root, dir: "." }}
+          onAsset={refreshData}
         />
       </Suspense>
     </div>

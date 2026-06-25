@@ -386,7 +386,7 @@ export function validateSkill(input: ValidationInput): ValidationIssue[] {
         issues.push({
           level: "info",
           field: "references",
-          message: `Reference "${ref}" is more than one level deep; spec recommends keeping references shallow.`,
+          message: `Reference "${ref}" is nested more than one directory deep; the spec recommends keeping references shallow.`,
         });
       }
     }

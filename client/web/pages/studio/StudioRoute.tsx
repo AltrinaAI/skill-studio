@@ -136,6 +136,40 @@ export function Component() {
   }, []);
   const reload = useCallback((force = false) => void reloadAsync(force), [reloadAsync]);
 
+  // Soft refresh after an out-of-band new file (a pasted/dropped asset): re-read
+  // the skill and patch ONLY the file tree + counts into the live `data`, then
+  // bump gitVersion so the source-control panel sees the new untracked change.
+  // Deliberately NEVER touches docVersion (the open buffer is mid-edit and must
+  // not remount) and NEVER overwrites raw/frontmatter/body/validation — the editor
+  // owns those, and the disk SKILL.md can lag the unsaved buffer, so swapping them
+  // in would clobber pending edits. Only `files`/`tree`/`stats` come from disk.
+  const refreshData = useCallback(() => {
+    const cur = dataRef.current;
+    if (!cur) return;
+    void loadSkill(cur.root)
+      .then((sd) => {
+        const prev = dataRef.current;
+        if (!prev || prev.root !== sd.root) return;
+        const merged: SkillData = {
+          ...prev,
+          tree: sd.tree,
+          files: sd.files,
+          stats: {
+            ...prev.stats,
+            fileCount: sd.stats.fileCount,
+            dirCount: sd.stats.dirCount,
+            totalBytes: sd.stats.totalBytes,
+          },
+        };
+        setData(merged);
+        dataRef.current = merged;
+        setGitVersion((v) => v + 1);
+      })
+      .catch(() => {
+        /* a transient read failure just leaves the current data in place */
+      });
+  }, []);
+
   // ---- version preview: view/edit a past version through the full editor -----
   // Each transition swaps the working tree under the mounted editor, so we (1)
   // flush pending edits to disk first (they get stashed, not lost), (2) hold
@@ -200,7 +234,7 @@ export function Component() {
   if (!data) return <SkillLoadingShell />;
   return (
     <StudioProvider
-      value={{ data, docVersion, gitVersion, bumpGit, afterSave, reload, preview, enterVersion, exitVersion, keepVersion }}
+      value={{ data, docVersion, gitVersion, bumpGit, afterSave, reload, refreshData, preview, enterVersion, exitVersion, keepVersion }}
     >
       <StudioLayout />
     </StudioProvider>

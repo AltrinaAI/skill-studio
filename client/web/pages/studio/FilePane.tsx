@@ -14,7 +14,7 @@ const LiveEditor = lazy(() => import("@/components/LiveEditor"));
 const EditorFallback = () => <div className="px-8 py-6 text-sm text-muted">Loading editor…</div>;
 
 export default function FilePane({ root, file, onSaved }: { root: string; file: FileData; onSaved?: () => void }) {
-  const { gitVersion, preview } = useStudio();
+  const { gitVersion, preview, refreshData } = useStudio();
   const editable = file.content != null && !file.tooLarge && !file.isBinary && file.category !== "image";
   // The in-editor WYSIWYG diff overlay is prose-only; other file types (code,
   // etc.) review via a plain read-only unified diff instead.
@@ -175,6 +175,7 @@ export default function FilePane({ root, file, onSaved }: { root: string; file: 
             baseline={baseline}
             review={reviewRequested && isMarkdown}
             assets={{ root, dir: assetDir }}
+            onAsset={refreshData}
           />
         </Suspense>
       )}
