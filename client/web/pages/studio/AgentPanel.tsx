@@ -11,8 +11,9 @@ import { loadStudioLayout, saveStudioLayout } from "@/lib/studioLayout";
 import { useStudio } from "./StudioContext";
 
 /**
- * The studio's terminals side panel — the Terminals workspace embedded
- * chrome-less (one implementation, two hosts). The nav's Terminals link
+ * Studio's **projection of the Terminal destination** — Studio page chrome, not a
+ * separate place: the Terminals workspace embedded chrome-less (one implementation,
+ * two hosts), seeded to this skill's folder. The nav's Terminals link
  * toggles this panel instead of leaving the skill; the header's expand button
  * goes to the full /terminals page, carrying the selected session. When the
  * skill came out of the last mining run (a staged proposal, or an existing

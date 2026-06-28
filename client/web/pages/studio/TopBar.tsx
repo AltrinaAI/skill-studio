@@ -42,9 +42,9 @@ export default function TopBar({
   showReview: boolean;
   /** Viewing a past version: review shows what THAT version changed, not working-tree edits. */
   previewing: boolean;
-  /** The embedded terminals side panel is open — the nav's Terminals link
-   *  toggles it here instead of leaving the skill (one entry point per
-   *  context; the full page is reachable from the panel's expand button). */
+  /** The embedded terminals side panel (Studio's projection of the Terminal
+   *  destination) is open — the nav's Terminal link toggles it here instead of
+   *  leaving the skill; the full page is reachable from the panel's expand button. */
   terminalsOpen: boolean;
   onToggleReview: () => void;
   onTerminals: () => void;
@@ -72,6 +72,8 @@ export default function TopBar({
         </>
       }
     >
+      {/* Studio page chrome (NavBar category 2): rendered into the bar for now;
+          conceptually belongs to the page and could move into the page body later. */}
       <AutosaveIndicator />
       {showReview && (
         <button
