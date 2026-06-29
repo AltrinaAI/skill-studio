@@ -92,7 +92,16 @@ function PanelHeader({
  *  diff overlay; clicking a commit opens its read-only diff in the main pane.
  *  Renders its sections as direct flex children of the sidebar column (fragment
  *  root), so expanding one pushes the others instead of expanding in place. */
-export default function SourceControl({ root, dirName }: { root: string; dirName: string }) {
+export default function SourceControl({
+  root,
+  dirName,
+  onPinFiles,
+}: {
+  root: string;
+  dirName: string;
+  /** Persist the Files section height when the Files/SCM sash is dragged. */
+  onPinFiles: (px: number) => void;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const [, setSearchParams] = useSearchParams();
@@ -197,45 +206,6 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
     if (wasSaving.current && !editor.saving) void refresh();
     wasSaving.current = editor.saving;
   }, [editor.saving, refresh]);
-
-  const startTracking = async () => {
-    setBusy(true);
-    setActionErr(null);
-    try {
-      await api.gitTrack(root);
-      await refresh();
-    } catch (e) {
-      setActionErr(e instanceof Error ? e.message : "Failed to start tracking");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Opt out of tracking: delete this skill's local history. Destructive and
-  // irreversible, so it's gated behind a danger confirm. The choice is recorded
-  // server-side so auto-tracking won't re-create the repo on the next discovery.
-  const stopTracking = async () => {
-    if (busy) return;
-    if (
-      !(await confirm({
-        title: "Stop tracking this skill?",
-        body: "This deletes all saved versions and the local version history for this skill. Your current files stay, but past versions can’t be recovered.",
-        confirmLabel: "Stop tracking",
-        danger: true,
-      }))
-    )
-      return;
-    setBusy(true);
-    setActionErr(null);
-    try {
-      await api.gitUntrack(root);
-      await refresh();
-    } catch (e) {
-      setActionErr(e instanceof Error ? e.message : "Couldn’t stop tracking");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const openChange = (f: GitFileChange) => {
     if (f.kind === "deleted") {
@@ -363,56 +333,60 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
   }, [canSaveVersion]);
 
   // ---- guard states -------------------------------------------------------
+  // The Files/SCM boundary sash, rendered above every state that shows SCM
+  // content. The untracked state renders nothing at all (no sash either), so an
+  // opted-out skill shows just its file list with no empty version-control area.
+  const sash = <StackSash after="files" resize="files" onPin={onPinFiles} />;
+
   if (!loaded) {
     return (
-      <StatusSection>
-        <p className="flex items-center gap-2 px-3 py-4 text-xs text-muted">
-          <Spinner className="h-3.5 w-3.5" /> Checking…
-        </p>
-      </StatusSection>
+      <>
+        {sash}
+        <StatusSection>
+          <p className="flex items-center gap-2 px-3 py-4 text-xs text-muted">
+            <Spinner className="h-3.5 w-3.5" /> Checking…
+          </p>
+        </StatusSection>
+      </>
     );
   }
   if (err || !info)
     return (
-      <StatusSection>
-        <Notice>{err ?? "Couldn’t load version control."}</Notice>
-      </StatusSection>
+      <>
+        {sash}
+        <StatusSection>
+          <Notice>{err ?? "Couldn’t load version control."}</Notice>
+        </StatusSection>
+      </>
     );
   if (!info.available)
     return (
-      <StatusSection>
-        <Notice>Git isn’t installed — install git to enable version history.</Notice>
-      </StatusSection>
+      <>
+        {sash}
+        <StatusSection>
+          <Notice>Git isn’t installed — install git to enable version history.</Notice>
+        </StatusSection>
+      </>
     );
   if (!versionable)
     return (
-      <StatusSection>
-        <Notice>
-          Version history is for your own skills. This is a {KIND_TAG[kind].label.toLowerCase()} skill — use{" "}
-          <span className="font-medium text-fg">Manage → Sync</span> to make an editable copy you can version.
-        </Notice>
-      </StatusSection>
+      <>
+        {sash}
+        <StatusSection>
+          <Notice>
+            Version history is for your own skills. This is a {KIND_TAG[kind].label.toLowerCase()} skill — use{" "}
+            <span className="font-medium text-fg">Manage → Sync</span> to make an editable copy you can version.
+          </Notice>
+        </StatusSection>
+      </>
     );
-  if (!info.isRepo && !info.inParentRepo)
-    return (
-      <StatusSection>
-        <div className="px-3 py-4">
-          <p className="mb-3 text-xs text-muted">Not version-tracked yet. Start a history for this skill.</p>
-          <button
-            type="button"
-            onClick={startTracking}
-            disabled={busy}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg hover:opacity-90 disabled:opacity-40"
-          >
-            {busy ? "Starting…" : "Start tracking"}
-          </button>
-          {actionErr && <p className="mt-2 text-xs text-danger">{actionErr}</p>}
-        </div>
-      </StatusSection>
-    );
+  // Untracked (opted out, or never tracked): skip the whole Source Control area.
+  // Tracking is started/stopped from Manage → Version tracking instead.
+  if (!info.isRepo && !info.inParentRepo) return null;
 
   return (
     <>
+      {sash}
       {/* New Changes — working-tree changes, scoped to this folder for your own repo
           AND for a skill nested in a parent repo. Header stays visible even when
           the tree is clean. Content-sized (fully visible) until pinned by a drag. */}
@@ -545,20 +519,6 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
                     </svg>
                   </button>
                 )}
-                {/* Opt out of tracking — destructive (deletes this skill's local
-                    history), so it confirms first; mirrors the discard-all action. */}
-                <button
-                  type="button"
-                  onClick={stopTracking}
-                  disabled={busy}
-                  title="Stop tracking this skill — deletes its version history"
-                  className={`${info.hasRemote ? "" : "ml-auto"} text-faint hover:text-danger disabled:opacity-40`}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M4.9 4.9 19.1 19.1" />
-                  </svg>
-                </button>
               </PanelHeader>
             }
           >

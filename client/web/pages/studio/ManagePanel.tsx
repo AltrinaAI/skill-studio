@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Spinner } from "@/components/ui";
-import { agentColor, KIND_TAG, type SkillKind } from "@/lib/agents";
+import { agentColor, isEditableBundledSkill, KIND_TAG, type SkillKind } from "@/lib/agents";
 import { useConfirm } from "@/components/useConfirm";
 import * as api from "@/lib/api";
-import type { SyncTarget } from "@/lib/api";
+import type { GitInfo, SyncTarget } from "@/lib/api";
 import { secretsPath } from "@/lib/routes";
+import { useStudio } from "./StudioContext";
 
 const btnGhost =
   "rounded-md border border-border px-3 py-1.5 text-sm text-fg transition-colors hover:bg-panel disabled:opacity-40";
@@ -131,6 +132,122 @@ function SyncSection({ root }: { root: string }) {
         ))}
       </ul>
       {msg && <p className={`text-xs ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
+    </div>
+  );
+}
+
+// ---- Version tracking -------------------------------------------------------
+// Begin or end this skill's local version history. Personal skills auto-track on
+// discovery, so this is mainly the opt-out (and the re-track path after one).
+// Opting out deletes the local .git, so it's gated behind a danger confirm and
+// the choice is remembered server-side so discovery won't re-create the repo.
+// `onChanged` (bumpGit) lets the sidebar's Source Control panel re-read state —
+// it shows nothing for an untracked skill, so opting out collapses it away.
+function VersionTrackingSection({ root, kind, onChanged }: { root: string; kind: SkillKind; onChanged: () => void }) {
+  const [info, setInfo] = useState<GitInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const confirm = useConfirm();
+  const versionable = kind === "personal" || isEditableBundledSkill(root);
+
+  const refresh = useCallback(() => {
+    setLoaded(false);
+    api
+      .gitInfo(root)
+      .then(setInfo)
+      .catch(() => setInfo(null))
+      .finally(() => setLoaded(true));
+  }, [root]);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const start = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setInfo(await api.gitTrack(root));
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn’t start tracking");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stop = async () => {
+    if (
+      !(await confirm({
+        title: "Stop tracking this skill?",
+        body: "This deletes all saved versions and the local version history for this skill. Your current files stay, but past versions can’t be recovered.",
+        confirmLabel: "Stop tracking",
+        danger: true,
+      }))
+    )
+      return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.gitUntrack(root);
+      setInfo(null); // drop the stale isRepo=true so the recheck shows the spinner, not a momentarily re-enabled "Stop tracking"
+      refresh();
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn’t stop tracking");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded && info === null) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted">
+        <Spinner className="h-3.5 w-3.5" /> Checking…
+      </p>
+    );
+  }
+  if (!info || !info.available) {
+    return <p className="text-xs text-muted">Git isn’t installed — install git to enable version history.</p>;
+  }
+  if (info.inParentRepo) {
+    return <p className="text-xs text-muted">Tracked by a parent repository — manage its versions there.</p>;
+  }
+  if (!versionable) {
+    return (
+      <p className="text-xs text-muted">
+        Version history is for your own skills. Use <span className="font-medium text-fg">Sync</span> above to make an
+        editable copy you can version.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {info.isRepo ? (
+        <>
+          <p className="text-xs text-muted">
+            This skill keeps a local version history. Stopping deletes its saved versions — your current files stay,
+            but past versions can’t be recovered.
+          </p>
+          <button
+            type="button"
+            onClick={stop}
+            disabled={busy}
+            className="rounded-md border border-danger/40 px-3 py-1.5 text-sm font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-40"
+          >
+            {busy ? "Stopping…" : "Stop tracking"}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted">Not version-tracked. Start a local history to save versions of this skill.</p>
+          <button type="button" onClick={start} disabled={busy} className={btnGhost}>
+            {busy ? "Starting…" : "Start tracking"}
+          </button>
+        </>
+      )}
+      {err && <p className="text-xs text-danger">{err}</p>}
     </div>
   );
 }
@@ -287,6 +404,7 @@ export default function ManagePanel({
   onDeleted: () => void;
 }) {
   const navigate = useNavigate();
+  const { bumpGit } = useStudio();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -320,6 +438,9 @@ export default function ManagePanel({
           </Section>
           <Section title="Sync to another agent">
             <SyncSection root={root} />
+          </Section>
+          <Section title="Version tracking">
+            <VersionTrackingSection root={root} kind={kind} onChanged={bumpGit} />
           </Section>
           <Section title="Delete">
             <DeleteSection root={root} dirName={dirName} kind={kind} onDeleted={onDeleted} />

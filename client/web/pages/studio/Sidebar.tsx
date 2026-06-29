@@ -3,7 +3,7 @@
 import { useState } from "react";
 import FileTree from "./FileTree";
 import SourceControl from "./SourceControl";
-import { SplitStack, StackSection, StackSash } from "@/components/SplitStack";
+import { SplitStack, StackSection } from "@/components/SplitStack";
 import { loadStudioLayout, saveStudioLayout } from "@/lib/studioLayout";
 import type { SkillData } from "@/lib/types";
 
@@ -43,15 +43,18 @@ export default function Sidebar({
         >
           <FileTree nodes={data.tree} selected={selected} onSelect={onSelect} onDelete={onDelete} />
         </StackSection>
-        <StackSash
-          after="files"
-          resize="files"
-          onPin={(px) => {
+        {/* The Files/SCM boundary sash lives inside SourceControl now, so it
+            disappears together with the SCM sections when a skill is untracked
+            (no dangling divider above an empty area). It still pins the Files
+            section height via this callback. */}
+        <SourceControl
+          root={data.root}
+          dirName={data.dirName}
+          onPinFiles={(px) => {
             setFilesH(px);
             saveStudioLayout({ filesH: px });
           }}
         />
-        <SourceControl root={data.root} dirName={data.dirName} />
       </SplitStack>
     </aside>
   );
