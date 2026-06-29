@@ -11,6 +11,7 @@ import { useConfirm } from "@/components/useConfirm";
 import { useStudio } from "./StudioContext";
 import SaveVersionDialog from "./SaveVersionDialog";
 import { GitHubSection } from "./GitHubSync";
+import { runGithubSync } from "@/lib/githubSync";
 import { studioPath, studioFilePath, studioCommitPath } from "@/lib/routes";
 import * as api from "@/lib/api";
 import type { GitInfo, GitCommit, GitFileChange } from "@/lib/api";
@@ -130,11 +131,15 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
       return next;
     });
 
-  // Pinned heights for New Changes and Remote (set by dragging their sashes;
-  // null = size to content). The sash drag itself is the SplitStack's business;
-  // these just remember the result.
+  // Pinned height for New Changes (set by dragging its sash; null = size to
+  // content). The sash drag itself is the SplitStack's business; this just
+  // remembers the result. Remote isn't pinnable — it always sizes to its own
+  // content so expanding it reveals everything without a manual drag.
   const [changesH, setChangesH] = useState<number | null>(() => loadStudioLayout().changesH);
-  const [remoteH, setRemoteH] = useState<number | null>(() => loadStudioLayout().remoteH);
+
+  // Quick-sync from the Versions header when a remote exists — the same action as
+  // the Remote panel's "Sync now", shared via runGithubSync so they can't diverge.
+  const [syncing, setSyncing] = useState(false);
 
   // "Save a version" (the deliberate checkpoint, a git commit) — moved here from
   // the top bar since it's a version action, not a file-level save.
@@ -299,6 +304,20 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
       setActionErr(e instanceof Error ? e.message : "Discard failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const syncRemote = async () => {
+    if (syncing || busy) return;
+    setSyncing(true);
+    setActionErr(null);
+    try {
+      await runGithubSync(root, { reload, bumpGit });
+      await refresh(); // reflect any pulled versions in the log right away
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -507,6 +526,25 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
             minBody={64}
             header={
               <PanelHeader title="Versions" count={log.length} open={open.versions} onToggle={() => toggle("versions")}>
+                {/* Sync with the remote — shown only when one is connected, so the
+                    everyday one-click sync doesn't require opening the Remote panel.
+                    Same action as the Remote panel's "Sync now" (runGithubSync). */}
+                {info.hasRemote && (
+                  <button
+                    type="button"
+                    onClick={syncRemote}
+                    disabled={syncing || busy}
+                    title="Sync with the remote"
+                    className="ml-auto text-faint hover:text-accent disabled:opacity-40"
+                  >
+                    <svg className={syncing ? "animate-spin" : ""} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                      <path d="M21 3v5h-5" />
+                      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                      <path d="M3 21v-5h5" />
+                    </svg>
+                  </button>
+                )}
                 {/* Opt out of tracking — destructive (deletes this skill's local
                     history), so it confirms first; mirrors the discard-all action. */}
                 <button
@@ -514,7 +552,7 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
                   onClick={stopTracking}
                   disabled={busy}
                   title="Stop tracking this skill — deletes its version history"
-                  className="ml-auto text-faint hover:text-danger disabled:opacity-40"
+                  className={`${info.hasRemote ? "" : "ml-auto"} text-faint hover:text-danger disabled:opacity-40`}
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <circle cx="12" cy="12" r="10" />
@@ -567,21 +605,14 @@ export default function SourceControl({ root, dirName }: { root: string; dirName
           {/* Remote — the remote half of version history (publish / sync / disconnect),
               named platform-neutrally since GitHub is just one of several git hosts
               it connects to. Collapsed by default; opening it sizes to exactly its
-              content (pushing the lists above up) until pinned by a drag. */}
-          <StackSash
-            after="versions"
-            resize="remote"
-            onPin={(px) => {
-              setRemoteH(px);
-              saveStudioLayout({ remoteH: px });
-            }}
-          />
+              content, so the Versions list above gives way and the whole panel shows
+              with no manual drag. It isn't pinnable (no sash above it): a content-
+              sized footer the way VS Code reveals a collapsed SCM pane. */}
           <StackSection
             id="remote"
             order={3}
             open={open.github}
             minBody={48}
-            pin={remoteH}
             bodyClassName="px-3 pb-3 pt-1"
             header={<PanelHeader title="Remote" open={open.github} onToggle={() => toggle("github")} />}
           >

@@ -10,8 +10,9 @@
 // Layout model (solve):
 // - A collapsed section is exactly its header.
 // - An open section targets its pinned height (set by dragging a sash) or its
-//   measured content height — so opening a section shows all of it, no inner
-//   scroll until space genuinely runs out.
+//   measured content height (floored at minBody, so a section whose content is
+//   still loading opens to its minimum rather than a one-line sliver) — so
+//   opening a section shows all of it, no inner scroll until space runs out.
 // - Slack goes to the bottom-most open `fill` section; deficit takes from the
 //   fills first (bottom-up), then the rest (bottom-up), each to its minimum.
 //
@@ -90,7 +91,10 @@ export function SplitStack({ className = "", children }: { className?: string; c
     const avail = el.clientHeight - sashes.current.size * SASH_PX;
     const entries = ordered();
     const target = new Map<string, number>(
-      entries.map(([id, s]) => [id, Math.round(s.open ? (s.pin ?? s.headerPx + s.contentPx) : s.headerPx)]),
+      entries.map(([id, s]) => [
+        id,
+        Math.round(s.open ? (s.pin ?? s.headerPx + Math.max(s.contentPx, s.minBody)) : s.headerPx),
+      ]),
     );
     const diff = avail - [...target.values()].reduce((a, b) => a + b, 0);
     const openFillsBottomUp = entries.filter(([, s]) => s.open && s.fill).reverse();

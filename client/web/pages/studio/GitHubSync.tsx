@@ -19,6 +19,7 @@ import { Spinner, btnPrimary, btnGhost } from "@/components/ui";
 import { useConfirm } from "@/components/useConfirm";
 import * as api from "@/lib/api";
 import type { GhOwner, GhStatus, GhDeviceStart } from "@/lib/api";
+import { runGithubSync } from "@/lib/githubSync";
 import { useStudio } from "./StudioContext";
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -259,7 +260,7 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
     setBusy(true);
     setMsg(null);
     try {
-      const r = await api.githubSyncNow(root);
+      const r = await runGithubSync(root, { reload, bumpGit });
       const text =
         r.action === "upToDate"
           ? "Already up to date."
@@ -271,8 +272,6 @@ export function GitHubSection({ root, dirName }: { root: string; dirName: string
                   r.conflictResolved ? "; the remote version won where both changed the same lines" : ""
                 }.`;
       setMsg({ ok: true, text });
-      if (r.pulled > 0) reload(true); // the working tree changed under the editor
-      else bumpGit();
       refresh();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Sync failed" });

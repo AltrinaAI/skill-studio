@@ -186,7 +186,16 @@ fn post_process(raw: &str) -> String {
         s = s.trim().to_string();
     }
 
-    strip_wrapping_quotes(&s).trim().to_string()
+    cap_length(&strip_wrapping_quotes(&s))
+}
+
+/// Keep drafts terse. The prompt targets ~10 words, but a backend can over-run or
+/// tack on an explanation, so as a backstop we keep only the first line and cap
+/// the word count — generous enough that a faithful ~10-word message is untouched.
+fn cap_length(s: &str) -> String {
+    const MAX_WORDS: usize = 12;
+    let first_line = s.lines().next().unwrap_or(s).trim();
+    first_line.split_whitespace().take(MAX_WORDS).collect::<Vec<_>>().join(" ")
 }
 
 fn strip_wrapping_quotes(s: &str) -> String {
@@ -223,5 +232,15 @@ mod tests {
         assert_eq!(post_process("```text\ndocs: update readme\n```"), "docs: update readme");
         assert_eq!(post_process("\"chore: bump deps\""), "chore: bump deps");
         assert_eq!(post_process("  refactor(core): tidy  "), "refactor(core): tidy");
+    }
+
+    #[test]
+    fn post_process_caps_length() {
+        // An over-long draft is trimmed to the word cap (a faithful short one isn't).
+        let long = "Refactor the source control panel to add a shared sync helper and wire everything up";
+        assert_eq!(post_process(long).split_whitespace().count(), 12);
+        assert_eq!(post_process("Add sync button to versions header"), "Add sync button to versions header");
+        // A trailing explanation line is dropped — only the summary survives.
+        assert_eq!(post_process("Tidy the remote section\n\nThis also removes the pin."), "Tidy the remote section");
     }
 }

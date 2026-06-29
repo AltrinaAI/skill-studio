@@ -40,10 +40,10 @@ use crate::process::hidden_command;
 
 /// The instruction handed to a cloud CLI; the diff arrives on the child's stdin.
 /// Kept lean on purpose (see the commit-prompt philosophy) — format, no prefix,
-/// one sentence, output-only.
-const INSTRUCTION: &str = "Summarize the git diff provided on standard input as ONE short, \
-plain-English sentence describing what changed. Do not use a \"feat:\"/\"fix:\"/type prefix and do \
-not prefix a filename — just the description. Output only that one sentence, nothing else.";
+/// ~10 words, output-only.
+const INSTRUCTION: &str = "Summarize the git diff provided on standard input in about 10 words \
+describing what changed. Do not use a \"feat:\"/\"fix:\"/type prefix and do not prefix a filename — \
+just the description. Output only that, nothing else.";
 
 /// Hard ceiling on a single generation. Cloud calls are ~3–12s; this only fires
 /// on a hung/blocked child, after which we kill it and surface a clean error.
@@ -528,7 +528,7 @@ fn run_opencode(bin: &PathBuf, diff: &str) -> Result<Generated, String> {
 fn run_llama(diff: &str, seed: i64, temperature: f32) -> Result<Generated, String> {
     let prompt = format!(
         "Analyze the following git diff in no more than 100 words, then write a short commit message. \
-The message must be one short, plain-English sentence describing what changed — with no \
+The message must be about 10 words describing what changed — with no \
 \"feat:\"/\"fix:\"/type prefix and no filename prefix, just the description.\n\nDiff:\n{diff}"
     );
     let messages = vec![ChatMessage::new("user", prompt)];
